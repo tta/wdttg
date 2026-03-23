@@ -86,16 +86,19 @@ const STATUS_OPTIONS: [(TaskStatus, &str); 3] = [
 
 pub struct EditForm {
     task: EditableTask,
+    original: EditableTask,
     current_field: Field,
     editing_text: bool,
     text_buffer: String,
     em_index: usize,
     status_index: usize,
+    pending_cancel: bool,
 }
 
 impl EditForm {
     pub fn new(task: Task) -> Self {
         let editable: EditableTask = task.into();
+        let original = editable.clone();
         let em_index = EM_OPTIONS
             .iter()
             .position(|(q, _)| *q == editable.em_quadrant)
@@ -107,12 +110,22 @@ impl EditForm {
 
         Self {
             task: editable,
+            original,
             current_field: Field::Name,
             editing_text: false,
             text_buffer: String::new(),
             em_index,
             status_index,
+            pending_cancel: false,
         }
+    }
+
+    fn has_changes(&self) -> bool {
+        self.task.name != self.original.name
+            || self.task.notes != self.original.notes
+            || self.task.em_quadrant != self.original.em_quadrant
+            || self.task.status != self.original.status
+            || self.task.recurring != self.original.recurring
     }
 
     pub fn run(mut self) -> Result<EditFormResult> {
@@ -150,7 +163,17 @@ impl EditForm {
             if let Event::Key(key) =
                 event::read().map_err(|e| EditFormError::Terminal(e.to_string()))?
             {
-                if self.editing_text {
+                if self.pending_cancel {
+                    match (key.modifiers, key.code) {
+                        (_, KeyCode::Char('y') | KeyCode::Char('Y')) => {
+                            return Ok(EditFormResult::Cancelled);
+                        }
+                        (_, KeyCode::Char('n') | KeyCode::Char('N')) | (_, KeyCode::Esc) => {
+                            self.pending_cancel = false;
+                        }
+                        _ => {}
+                    }
+                } else if self.editing_text {
                     match (key.modifiers, key.code) {
                         (_, KeyCode::Esc) => {
                             self.editing_text = false;
@@ -173,7 +196,11 @@ impl EditForm {
                 } else {
                     match (key.modifiers, key.code) {
                         (_, KeyCode::Esc) | (_, KeyCode::Char('q') | KeyCode::Char('Q')) => {
-                            return Ok(EditFormResult::Cancelled);
+                            if self.has_changes() {
+                                self.pending_cancel = true;
+                            } else {
+                                return Ok(EditFormResult::Cancelled);
+                            }
                         }
                         (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                             return Ok(EditFormResult::Cancelled);
@@ -308,6 +335,33 @@ impl EditForm {
         self.render_title(f, chunks[0]);
         self.render_fields(f, chunks[1]);
         self.render_help(f, chunks[2]);
+
+        if self.pending_cancel {
+            self.render_confirm_dialog(f);
+        }
+    }
+
+    fn render_confirm_dialog(&self, f: &mut Frame) {
+        let dialog = Paragraph::new(Line::from(vec![Span::styled(
+            "Discard unsaved changes? (y/n)",
+            Style::default().fg(Color::Yellow),
+        )]))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Confirm ")
+                .title_style(Style::default().fg(Color::Red))
+                .style(Style::default().bg(Color::Black)),
+        );
+
+        let area = ratatui::layout::Rect {
+            x: (f.size().width.saturating_sub(40)) / 2,
+            y: (f.size().height.saturating_sub(3)) / 2,
+            width: 40.min(f.size().width),
+            height: 3,
+        };
+
+        f.render_widget(dialog, area);
     }
 
     fn render_title(&self, f: &mut Frame, area: Rect) {
