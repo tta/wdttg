@@ -193,7 +193,7 @@ fn parse_month_day(input: &str) -> Option<(u32, u32)> {
     let (month_str, day_str) = input.split_once('/')?;
     let month: u32 = month_str.parse().ok()?;
     let day: u32 = day_str.parse().ok()?;
-    if month >= 1 && month <= 12 && day >= 1 && day <= 31 {
+    if (1..=12).contains(&month) && (1..=31).contains(&day) {
         Some((month, day))
     } else {
         None
