@@ -160,10 +160,10 @@ impl SessionEditForm {
                         (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
                             return Ok(SessionEditResult::Deleted(self.session.id));
                         }
-                        (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
+                        (_, KeyCode::Char('j')) => {
                             self.move_field(1);
                         }
-                        (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
+                        (_, KeyCode::Char('k')) => {
                             self.move_field(-1);
                         }
                         (_, KeyCode::Enter) => {
@@ -411,7 +411,7 @@ impl SessionEditForm {
         let help_text = if self.editing_text {
             "Enter: confirm | Esc: cancel | Ctrl+W: delete word"
         } else {
-            "↑↓/Ctrl+J/K: navigate | Space/→: edit | Enter: save | Ctrl+D: delete | Esc: cancel"
+            "↑↓/j/k: navigate | Space/→: edit | Enter: save | Ctrl+D: delete | Esc: cancel"
         };
 
         let help = Paragraph::new(Line::from(vec![Span::styled(

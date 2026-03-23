@@ -178,10 +178,10 @@ impl EditForm {
                         (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                             return Ok(EditFormResult::Cancelled);
                         }
-                        (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
+                        (_, KeyCode::Char('j')) => {
                             self.move_field(1);
                         }
-                        (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
+                        (_, KeyCode::Char('k')) => {
                             self.move_field(-1);
                         }
                         (_, KeyCode::Enter) => {
@@ -399,7 +399,7 @@ impl EditForm {
         let help_text = if self.editing_text {
             "Enter: confirm | Esc: cancel | Ctrl+W: delete word"
         } else {
-            "↑↓/Ctrl+J/K: navigate | Space/→: edit field | ←: cycle options | Enter: save | Esc: cancel"
+            "↑↓/j/k: navigate | Space/→: edit field | ←: cycle options | Enter: save | Esc: cancel"
         };
 
         let help = Paragraph::new(Line::from(vec![Span::styled(
