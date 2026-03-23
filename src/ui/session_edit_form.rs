@@ -200,7 +200,7 @@ impl SessionEditForm {
                         (_, KeyCode::Enter) | (_, KeyCode::Char(' ')) | (_, KeyCode::Right) => {
                             self.edit_current_field();
                         }
-                        (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
+                        (_, KeyCode::Char('s')) => {
                             if let Some(result) = self.validate_and_save() {
                                 return Ok(result);
                             }
@@ -463,7 +463,7 @@ impl SessionEditForm {
         let help_text = if self.editing_text {
             "Enter: confirm | Esc: cancel | Ctrl+W: delete word"
         } else {
-            "↑↓/j/k: navigate | Enter/Space: edit | Ctrl+S: save | Ctrl+D: delete | q/Esc: back"
+            "↑↓/j/k: navigate | Enter/Space: edit | s: save | Ctrl+D: delete | q/Esc: back"
         };
 
         let help = Paragraph::new(Line::from(vec![Span::styled(

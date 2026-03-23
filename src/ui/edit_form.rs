@@ -211,7 +211,7 @@ impl EditForm {
                         (_, KeyCode::Char('k')) => {
                             self.move_field(-1);
                         }
-                        (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
+                        (_, KeyCode::Char('s')) => {
                             return Ok(EditFormResult::Saved(Task {
                                 id: self.task.id,
                                 name: self.task.name.clone(),
@@ -453,7 +453,7 @@ impl EditForm {
         let help_text = if self.editing_text {
             "Enter: confirm | Esc: cancel | Ctrl+W: delete word"
         } else {
-            "↑↓/j/k: navigate | Enter/Space: edit | ←: cycle | Ctrl+S: save | q/Esc: back"
+            "↑↓/j/k: navigate | Enter/Space: edit | ←: cycle | s: save | q/Esc: back"
         };
 
         let help = Paragraph::new(Line::from(vec![Span::styled(
