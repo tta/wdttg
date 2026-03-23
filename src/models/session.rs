@@ -79,6 +79,7 @@ pub struct TaskTime {
     pub task_name: String,
     pub total_seconds: i64,
     pub session_count: i64,
+    pub em_quadrant: EmQuadrant,
 }
 
 impl TaskTime {

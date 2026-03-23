@@ -402,20 +402,23 @@ impl SessionService {
         let end_str = format!("{} 23:59:59", end.format("%Y-%m-%d"));
 
         let mut stmt = conn.prepare(
-            "SELECT t.name, SUM(strftime('%s', s.end_time) - strftime('%s', s.start_time)) as total_seconds, COUNT(s.id) as session_count
+            "SELECT t.name, SUM(strftime('%s', s.end_time) - strftime('%s', s.start_time)) as total_seconds, COUNT(s.id) as session_count, t.em_urgent, t.em_important
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
              WHERE s.start_time >= ?1 AND s.start_time <= ?2 AND s.end_time IS NOT NULL
-             GROUP BY t.id, t.name
+             GROUP BY t.id, t.name, t.em_urgent, t.em_important
              ORDER BY total_seconds DESC",
         )?;
 
         let results = stmt
             .query_map(params![start_str, end_str], |row| {
+                let em_urgent: i32 = row.get(3)?;
+                let em_important: i32 = row.get(4)?;
                 Ok(crate::models::TaskTime {
                     task_name: row.get(0)?,
                     total_seconds: row.get(1)?,
                     session_count: row.get(2)?,
+                    em_quadrant: crate::models::EmQuadrant::new(em_urgent != 0, em_important != 0),
                 })
             })?
             .collect::<std::result::Result<Vec<_>, _>>()?;

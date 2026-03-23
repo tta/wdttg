@@ -672,7 +672,7 @@ fn handle_report_task(period: &str, db: &Arc<Database>) -> Result<(), String> {
     let total_seconds: i64 = task_times.iter().map(|tt| tt.total_seconds).sum();
 
     println!("Time by Task ({} to {})", start, end);
-    println!("{}", "=".repeat(50));
+    println!("{}", "=".repeat(70));
 
     for tt in &task_times {
         let percentage = if total_seconds > 0 {
@@ -680,17 +680,21 @@ fn handle_report_task(period: &str, db: &Arc<Database>) -> Result<(), String> {
         } else {
             0.0
         };
+        let color = quadrant_ansi_color(&tt.em_quadrant);
         println!(
-            "{:<30} {:>10} ({:>5.1}%) {} session{}",
+            "{}{:<30}{} {:>10} ({:>5.1}%) {} session{}  {}",
+            color,
             tt.task_name,
+            ANSI_RESET,
             format_duration(chrono::Duration::seconds(tt.total_seconds)),
             percentage,
             tt.session_count,
-            if tt.session_count == 1 { "" } else { "s" }
+            if tt.session_count == 1 { "" } else { "s" },
+            tt.em_quadrant.tag()
         );
     }
 
-    println!("{}", "-".repeat(50));
+    println!("{}", "-".repeat(70));
     println!(
         "Total: {} across {} task{}",
         format_duration(chrono::Duration::seconds(total_seconds)),
