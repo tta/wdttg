@@ -6,7 +6,7 @@ use wdttg::ui::{
 };
 use wdttg::{
     cli, parse_date, parse_period, parse_relative_time, Commands, Database, EmQuadrant,
-    SessionService, TaskService, TaskStatus,
+    SessionService, TaskService,
 };
 
 fn format_duration(duration: chrono::Duration) -> String {
@@ -26,7 +26,7 @@ fn is_interactive() -> bool {
 }
 
 fn parse_em_arg(em: &str) -> Result<EmQuadrant, String> {
-    EmQuadrant::from_str(em)
+    em.parse()
 }
 
 fn prompt_em_quadrant() -> Option<EmQuadrant> {
@@ -346,6 +346,7 @@ fn handle_archive(query: Option<&str>, no_prompt: bool, db: &Arc<Database>) -> R
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn handle_edit(
     query: Option<&str>,
     name: Option<&str>,
@@ -387,8 +388,9 @@ fn handle_edit(
                 }
 
                 if let Some(status_str) = status {
-                    updated_task.status =
-                        TaskStatus::from_str(status_str).map_err(|e| e.to_string())?;
+                    updated_task.status = status_str
+                        .parse::<wdttg::TaskStatus>()
+                        .map_err(|e| e.to_string())?;
                 }
 
                 if let Some(recur) = recurring {

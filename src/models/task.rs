@@ -17,18 +17,6 @@ impl TaskStatus {
             TaskStatus::Archived => "archived",
         }
     }
-
-    pub fn from_str(s: &str) -> Result<Self, String> {
-        match s {
-            "active" => Ok(TaskStatus::Active),
-            "completed" => Ok(TaskStatus::Completed),
-            "archived" => Ok(TaskStatus::Archived),
-            _ => Err(format!(
-                "Invalid task status: '{}'. Expected: active, completed, or archived",
-                s
-            )),
-        }
-    }
 }
 
 impl fmt::Display for TaskStatus {
@@ -41,7 +29,15 @@ impl FromStr for TaskStatus {
     type Err = String;
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
-        TaskStatus::from_str(s)
+        match s {
+            "active" => Ok(TaskStatus::Active),
+            "completed" => Ok(TaskStatus::Completed),
+            "archived" => Ok(TaskStatus::Archived),
+            _ => Err(format!(
+                "Invalid task status: '{}'. Expected: active, completed, or archived",
+                s
+            )),
+        }
     }
 }
 
@@ -92,8 +88,18 @@ impl EmQuadrant {
             EmQuadrant::Eliminate => "Not Urgent + Not Important (Eliminate)",
         }
     }
+}
 
-    pub fn from_str(s: &str) -> Result<Self, String> {
+impl fmt::Display for EmQuadrant {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.tag())
+    }
+}
+
+impl FromStr for EmQuadrant {
+    type Err = String;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
         let normalized = s.trim().to_lowercase();
         let clean = normalized.trim_start_matches("#em");
 
@@ -107,20 +113,6 @@ impl EmQuadrant {
                 s
             )),
         }
-    }
-}
-
-impl fmt::Display for EmQuadrant {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self.tag())
-    }
-}
-
-impl FromStr for EmQuadrant {
-    type Err = String;
-
-    fn from_str(s: &str) -> Result<Self, Self::Err> {
-        EmQuadrant::from_str(s)
     }
 }
 

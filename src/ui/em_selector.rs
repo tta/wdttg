@@ -54,6 +54,12 @@ pub struct EmSelector {
     list_state: ListState,
 }
 
+impl Default for EmSelector {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EmSelector {
     pub fn new() -> Self {
         let mut list_state = ListState::default();

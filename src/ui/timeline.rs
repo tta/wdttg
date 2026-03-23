@@ -214,7 +214,7 @@ impl TimelineView {
             .blocks
             .iter()
             .filter(|b| {
-                let block_start_hour = b.start.hour() as u32;
+                let block_start_hour = b.start.hour();
                 block_start_hour < end_hour && block_start_hour >= start_hour
             })
             .collect();
@@ -284,10 +284,8 @@ impl TimelineView {
             let start_idx = (start_mins / mins_per_char) as usize;
             let end_idx = ((end_mins / mins_per_char) as usize).min(width);
 
-            for i in start_idx..end_idx {
-                if i < width {
-                    positions[i] = Some((color, '█'));
-                }
+            for pos in &mut positions[start_idx..end_idx] {
+                *pos = Some((color, '█'));
             }
         }
 
@@ -312,7 +310,7 @@ impl TimelineView {
                     }
                 }
                 None => {
-                    if current_color != None {
+                    if current_color.is_some() {
                         if !current_chars.is_empty() {
                             let style = current_color
                                 .map(|c| Style::default().fg(c))
@@ -453,7 +451,7 @@ pub fn print_timeline_static(blocks: &[TimeBlock], date: NaiveDate) {
                 let time_str = block.start.format("%H:%M");
                 let duration_str = block
                     .duration_seconds()
-                    .map(|s| format_duration(s))
+                    .map(format_duration)
                     .unwrap_or_else(|| "active".to_string());
                 let em_tag = task.em_quadrant().tag();
                 println!("{} [{}]  {} {}", time_str, duration_str, task.name, em_tag);
@@ -488,10 +486,8 @@ fn print_24h_bar_static(blocks: &[TimeBlock], width: usize) {
         let start_idx = (start_mins / mins_per_char) as usize;
         let end_idx = ((end_mins / mins_per_char) as usize).min(width);
 
-        for i in start_idx..end_idx {
-            if i < width {
-                bar[i] = '█';
-            }
+        for ch in &mut bar[start_idx..end_idx] {
+            *ch = '█';
         }
     }
 

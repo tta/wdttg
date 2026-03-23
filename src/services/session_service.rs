@@ -496,7 +496,7 @@ impl SessionService {
         let task_created_at_str: String = row.get(13)?;
         let task_updated_at_str: String = row.get(14)?;
 
-        let status = TaskStatus::from_str(&status_str).map_err(|_| {
+        let status: TaskStatus = status_str.parse().map_err(|_| {
             rusqlite::Error::InvalidColumnType(
                 11,
                 "status".to_string(),

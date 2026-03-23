@@ -237,7 +237,7 @@ impl TaskService {
         let created_at_str: String = row.get(7)?;
         let updated_at_str: String = row.get(8)?;
 
-        let status = TaskStatus::from_str(&status_str).map_err(|_| {
+        let status: TaskStatus = status_str.parse().map_err(|_| {
             rusqlite::Error::InvalidColumnType(5, "status".to_string(), rusqlite::types::Type::Text)
         })?;
 
