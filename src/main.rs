@@ -827,6 +827,21 @@ fn handle_report_history(limit: usize, db: &Arc<Database>) -> Result<(), String>
     Ok(())
 }
 
+fn handle_backup(keep: usize, db: &Arc<Database>) -> Result<(), String> {
+    let (backup_path, kept, removed) = db.backup(keep).map_err(|e| e.to_string())?;
+
+    let backup_path_str = backup_path
+        .to_str()
+        .unwrap_or("unknown path")
+        .replace("/Users/", "~/")
+        .replace(&std::env::var("HOME").unwrap_or_default(), "~");
+
+    println!("Backup created: {}", backup_path_str);
+    println!("Kept {} backups, removed {} old backups.", kept, removed);
+
+    Ok(())
+}
+
 fn main() {
     let cli = cli::parse();
 
@@ -878,10 +893,7 @@ fn main() {
             wdttg::ReportCommands::Timeline { date } => handle_report_timeline(&date, &db),
             wdttg::ReportCommands::History { limit } => handle_report_history(limit, &db),
         },
-        Commands::Backup { keep } => {
-            println!("Backup: keep={} (not implemented)", keep);
-            Ok(())
-        }
+        Commands::Backup { keep } => handle_backup(keep, &db),
     };
 
     if let Err(e) = result {

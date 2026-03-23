@@ -600,4 +600,87 @@ mod cli_tests {
                 .stderr(predicate::str::contains("Task name required"));
         });
     }
+
+    #[test]
+    fn test_backup_creates_file() {
+        with_temp_db(|temp_dir, _db_path| {
+            let mut cmd = Command::cargo_bin("wdttg").unwrap();
+            cmd.args(["--no-prompt", "backup", "--keep", "5"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("Backup created:"))
+                .stdout(predicate::str::contains(
+                    "Kept 1 backups, removed 0 old backups.",
+                ));
+
+            let backup_dir = temp_dir.path().join("backups");
+            assert!(backup_dir.exists(), "Backup directory should be created");
+
+            let backups: Vec<std::path::PathBuf> = std::fs::read_dir(&backup_dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().map(|ext| ext == "db").unwrap_or(false))
+                .map(|e| e.path())
+                .collect();
+
+            assert_eq!(backups.len(), 1, "Should have exactly one backup");
+        });
+    }
+
+    #[test]
+    fn test_backup_retention() {
+        with_temp_db(|temp_dir, _db_path| {
+            for _ in 0..5 {
+                let mut cmd = Command::cargo_bin("wdttg").unwrap();
+                cmd.args(["--no-prompt", "backup", "--keep", "3"])
+                    .assert()
+                    .success();
+                std::thread::sleep(std::time::Duration::from_millis(1100));
+            }
+
+            let backup_dir = temp_dir.path().join("backups");
+            let backups: Vec<std::path::PathBuf> = std::fs::read_dir(&backup_dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().map(|ext| ext == "db").unwrap_or(false))
+                .map(|e| e.path())
+                .collect();
+
+            assert_eq!(backups.len(), 3, "Should keep only 3 backups");
+        });
+    }
+
+    #[test]
+    fn test_backup_is_valid_sqlite() {
+        with_temp_db(|temp_dir, _db_path| {
+            let mut cmd = Command::cargo_bin("wdttg").unwrap();
+            cmd.args(["--no-prompt", "start", "backup-test-task", "--em", "11"])
+                .assert()
+                .success();
+
+            let mut cmd2 = Command::cargo_bin("wdttg").unwrap();
+            cmd2.args(["--no-prompt", "backup", "--keep", "5"])
+                .assert()
+                .success();
+
+            let backup_dir = temp_dir.path().join("backups");
+            let backup_file: std::path::PathBuf = std::fs::read_dir(&backup_dir)
+                .unwrap()
+                .filter_map(|e| e.ok())
+                .filter(|e| e.path().extension().map(|ext| ext == "db").unwrap_or(false))
+                .map(|e| e.path())
+                .next()
+                .unwrap();
+
+            let conn = rusqlite::Connection::open(&backup_file).unwrap();
+            let table_count: i64 = conn
+                .query_row(
+                    "SELECT COUNT(*) FROM sqlite_master WHERE type='table'",
+                    [],
+                    |row| row.get(0),
+                )
+                .unwrap();
+            assert!(table_count >= 4, "Backup should contain all tables");
+        });
+    }
 }

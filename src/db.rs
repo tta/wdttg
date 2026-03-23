@@ -1,3 +1,4 @@
+use rusqlite::backup::Backup;
 use rusqlite::Connection;
 use std::path::PathBuf;
 use std::sync::Mutex;
@@ -11,6 +12,8 @@ pub enum DbError {
     Io(#[from] std::io::Error),
     #[error("Cannot determine data directory")]
     NoDataDir,
+    #[error("Cannot backup in-memory database")]
+    InMemoryBackup,
 }
 
 pub type Result<T> = std::result::Result<T, DbError>;
@@ -72,16 +75,44 @@ impl Database {
     }
 
     pub fn backup_path(&self) -> Result<PathBuf> {
-        let db_path = self.path.as_ref().ok_or_else(|| {
-            DbError::Io(std::io::Error::new(
-                std::io::ErrorKind::InvalidInput,
-                "Cannot backup in-memory database",
-            ))
-        })?;
+        let db_path = self.path.as_ref().ok_or(DbError::InMemoryBackup)?;
 
         let backup_dir = db_path.parent().unwrap().join("backups");
         std::fs::create_dir_all(&backup_dir)?;
         Ok(backup_dir)
+    }
+
+    pub fn backup(&self, keep: usize) -> Result<(PathBuf, usize, usize)> {
+        let backup_dir = self.backup_path()?;
+        let timestamp = chrono::Local::now().format("%Y-%m-%d-%H%M%S");
+        let backup_file = backup_dir.join(format!("{}.db", timestamp));
+
+        let conn = self.connection();
+        let mut backup_conn = Connection::open(&backup_file)?;
+        let backup = Backup::new(&conn, &mut backup_conn)?;
+        backup.run_to_completion(100, std::time::Duration::from_millis(10), None)?;
+
+        let mut backups: Vec<PathBuf> = std::fs::read_dir(&backup_dir)?
+            .filter_map(|entry| entry.ok())
+            .filter(|entry| entry.path().extension().map(|e| e == "db").unwrap_or(false))
+            .map(|entry| entry.path())
+            .collect();
+
+        backups.sort();
+
+        let removed = if backups.len() > keep {
+            let to_remove = backups.len() - keep;
+            for old_backup in backups.iter().take(to_remove) {
+                std::fs::remove_file(old_backup)?;
+            }
+            to_remove
+        } else {
+            0
+        };
+
+        let kept = backups.len().saturating_sub(removed);
+
+        Ok((backup_file, kept, removed))
     }
 }
 
