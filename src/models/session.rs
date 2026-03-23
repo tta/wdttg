@@ -75,6 +75,23 @@ impl TagTime {
 }
 
 #[derive(Debug, Clone)]
+pub struct TagWithTime {
+    pub tag: String,
+    pub total_seconds: i64,
+    pub session_count: i64,
+}
+
+impl TagWithTime {
+    pub fn total_minutes(&self) -> i64 {
+        self.total_seconds / 60
+    }
+
+    pub fn total_hours(&self) -> f64 {
+        self.total_seconds as f64 / 3600.0
+    }
+}
+
+#[derive(Debug, Clone)]
 pub struct TaskTime {
     pub task_name: String,
     pub total_seconds: i64,

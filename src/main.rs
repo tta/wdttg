@@ -771,46 +771,110 @@ fn handle_report_timeline(date: &str, no_prompt: bool, db: &Arc<Database>) -> Re
     Ok(())
 }
 
-fn handle_report_history(limit: usize, db: &Arc<Database>) -> Result<(), String> {
+fn handle_report_history(
+    tag: Option<&str>,
+    period: &str,
+    limit: usize,
+    no_prompt: bool,
+    db: &Arc<Database>,
+) -> Result<(), String> {
     let session_service = SessionService::new(Arc::clone(db));
+    let (start, end) = parse_period(period).map_err(|e| e.to_string())?;
 
-    let sessions = session_service
-        .get_recent(limit as i64)
-        .map_err(|e| e.to_string())?;
+    if let Some(tag_name) = tag {
+        let sessions = session_service
+            .get_sessions_by_tag(tag_name, start, end)
+            .map_err(|e| e.to_string())?;
 
-    if sessions.is_empty() {
-        println!("No sessions found");
-        return Ok(());
-    }
-
-    println!("Recent Sessions (last {})", limit);
-    println!("{}", "=".repeat(60));
-
-    for swt in &sessions {
-        let date = swt.session.start_time.format("%Y-%m-%d");
-        let start_time = swt.session.start_time.format("%H:%M");
-        let end_time = swt
-            .session
-            .end_time
-            .map(|t| t.format("%H:%M").to_string())
-            .unwrap_or_else(|| "active".to_string());
-        let em_tag = swt.task.em_quadrant().tag();
-
-        if let Some(seconds) = swt.duration_seconds() {
-            println!(
-                "{} {}-{} [{}] {} {}",
-                date,
-                start_time,
-                end_time,
-                format_duration(chrono::Duration::seconds(seconds)),
-                swt.task.name,
-                em_tag
-            );
+        if is_interactive() && !no_prompt {
+            use wdttg::ui::HistoryView;
+            let view = HistoryView::new(sessions, tag_name.to_string());
+            let _ = view.run().map_err(|e| e.to_string())?;
         } else {
-            println!(
-                "{} {}-{} [active] {} {}",
-                date, start_time, end_time, swt.task.name, em_tag
-            );
+            use wdttg::ui::{print_history_static, HistoryViewPeriod};
+            let ui_period = match period {
+                "day" => HistoryViewPeriod::Day,
+                "month" => HistoryViewPeriod::Month,
+                _ => HistoryViewPeriod::Week,
+            };
+            print_history_static(&sessions, tag_name, ui_period);
+        }
+    } else if is_interactive() && !no_prompt {
+        use wdttg::ui::{TagPicker, TagPickerPeriod, TagPickerResult};
+        let tags = session_service
+            .get_tags_with_time(start, end)
+            .map_err(|e| e.to_string())?;
+
+        if tags.is_empty() {
+            println!("No tagged sessions found for period: {}", period);
+            return Ok(());
+        }
+
+        let ui_period = match period {
+            "day" => TagPickerPeriod::Day,
+            "month" => TagPickerPeriod::Month,
+            _ => TagPickerPeriod::Week,
+        };
+
+        let picker = TagPicker::new(tags).with_period(ui_period);
+        match picker.run().map_err(|e| e.to_string())? {
+            TagPickerResult::Selected(selected_tag) => {
+                let sessions = session_service
+                    .get_sessions_by_tag(&selected_tag, start, end)
+                    .map_err(|e| e.to_string())?;
+
+                use wdttg::ui::{HistoryView, HistoryViewPeriod};
+                let history_period = match period {
+                    "day" => HistoryViewPeriod::Day,
+                    "month" => HistoryViewPeriod::Month,
+                    _ => HistoryViewPeriod::Week,
+                };
+                let view = HistoryView::new(sessions, selected_tag).with_period(history_period);
+                let _ = view.run().map_err(|e| e.to_string())?;
+            }
+            TagPickerResult::Cancelled => {
+                println!("Cancelled.");
+            }
+        }
+    } else {
+        let sessions = session_service
+            .get_recent(limit as i64)
+            .map_err(|e| e.to_string())?;
+
+        if sessions.is_empty() {
+            println!("No sessions found");
+            return Ok(());
+        }
+
+        println!("Recent Sessions (last {})", limit);
+        println!("{}", "=".repeat(60));
+
+        for swt in &sessions {
+            let date = swt.session.start_time.format("%Y-%m-%d");
+            let start_time = swt.session.start_time.format("%H:%M");
+            let end_time = swt
+                .session
+                .end_time
+                .map(|t| t.format("%H:%M").to_string())
+                .unwrap_or_else(|| "active".to_string());
+            let em_tag = swt.task.em_quadrant().tag();
+
+            if let Some(seconds) = swt.duration_seconds() {
+                println!(
+                    "{} {}-{} [{}] {} {}",
+                    date,
+                    start_time,
+                    end_time,
+                    format_duration(chrono::Duration::seconds(seconds)),
+                    swt.task.name,
+                    em_tag
+                );
+            } else {
+                println!(
+                    "{} {}-{} [active] {} {}",
+                    date, start_time, end_time, swt.task.name, em_tag
+                );
+            }
         }
     }
 
@@ -883,7 +947,9 @@ fn main() {
             wdttg::ReportCommands::Timeline { date } => {
                 handle_report_timeline(&date, cli.no_prompt, &db)
             }
-            wdttg::ReportCommands::History { limit } => handle_report_history(limit, &db),
+            wdttg::ReportCommands::History { tag, period, limit } => {
+                handle_report_history(tag.as_deref(), &period, limit, cli.no_prompt, &db)
+            }
         },
         Commands::Backup { keep } => handle_backup(keep, &db),
     };

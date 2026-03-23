@@ -99,6 +99,11 @@ pub enum ReportCommands {
     },
 
     History {
+        tag: Option<String>,
+
+        #[arg(long, default_value = "week")]
+        period: String,
+
         #[arg(long, default_value = "20")]
         limit: usize,
     },

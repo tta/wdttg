@@ -459,6 +459,71 @@ impl SessionService {
         Ok(results)
     }
 
+    pub fn get_tags_with_time(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<crate::models::TagWithTime>> {
+        let conn = self.db.connection();
+
+        let start_str = format!("{} 00:00:00", start.format("%Y-%m-%d"));
+        let end_str = format!("{} 23:59:59", end.format("%Y-%m-%d"));
+
+        let mut stmt = conn.prepare(
+            "SELECT tg.name, SUM(strftime('%s', s.end_time) - strftime('%s', s.start_time)) as total_seconds, COUNT(s.id) as session_count
+             FROM sessions s
+             INNER JOIN tasks t ON s.task_id = t.id
+             INNER JOIN task_tags tt ON t.id = tt.task_id
+             INNER JOIN tags tg ON tt.tag_id = tg.id
+             WHERE s.start_time >= ?1 AND s.start_time <= ?2 AND s.end_time IS NOT NULL
+             GROUP BY tg.id, tg.name
+             ORDER BY total_seconds DESC",
+        )?;
+
+        let results = stmt
+            .query_map(params![start_str, end_str], |row| {
+                Ok(crate::models::TagWithTime {
+                    tag: row.get(0)?,
+                    total_seconds: row.get(1)?,
+                    session_count: row.get(2)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(results)
+    }
+
+    pub fn get_sessions_by_tag(
+        &self,
+        tag: &str,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<SessionWithTask>> {
+        let conn = self.db.connection();
+
+        let start_str = format!("{} 00:00:00", start.format("%Y-%m-%d"));
+        let end_str = format!("{} 23:59:59", end.format("%Y-%m-%d"));
+
+        let mut stmt = conn.prepare(
+            "SELECT DISTINCT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.created_at,
+                    t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
+             FROM sessions s
+             INNER JOIN tasks t ON s.task_id = t.id
+             INNER JOIN task_tags tt ON t.id = tt.task_id
+             INNER JOIN tags tg ON tt.tag_id = tg.id
+             WHERE tg.name = ?1 AND s.start_time >= ?2 AND s.start_time <= ?3 AND s.end_time IS NOT NULL
+             ORDER BY s.start_time DESC",
+        )?;
+
+        let sessions = stmt
+            .query_map(params![tag, start_str, end_str], |row| {
+                self.row_to_session_with_task(row)
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(sessions)
+    }
+
     fn row_to_session(&self, row: &rusqlite::Row) -> std::result::Result<Session, rusqlite::Error> {
         let id: i64 = row.get(0)?;
         let task_id: i64 = row.get(1)?;
@@ -827,5 +892,58 @@ mod tests {
         let tag_names: Vec<&str> = tag_times.iter().map(|t| t.tag.as_str()).collect();
         assert!(tag_names.contains(&"coding"));
         assert!(tag_names.contains(&"feature"));
+    }
+
+    #[test]
+    fn test_get_tags_with_time() {
+        let (session_service, task_service) = create_test_services();
+
+        let task = task_service.get_or_create("coding/feature").unwrap();
+
+        let start = Utc::now() - chrono::Duration::hours(2);
+        let end = Utc::now() - chrono::Duration::hours(1);
+
+        session_service.log_session(task.id, start, end).unwrap();
+
+        let today = Utc::now().date_naive();
+        let tags_with_time = session_service.get_tags_with_time(today, today).unwrap();
+
+        assert!(!tags_with_time.is_empty());
+        let coding_tag = tags_with_time.iter().find(|t| t.tag == "coding");
+        assert!(coding_tag.is_some());
+        let coding_tag = coding_tag.unwrap();
+        assert_eq!(coding_tag.total_seconds, 3600);
+        assert_eq!(coding_tag.session_count, 1);
+    }
+
+    #[test]
+    fn test_get_sessions_by_tag() {
+        let (session_service, task_service) = create_test_services();
+
+        let task1 = task_service.get_or_create("coding/feature").unwrap();
+        let task2 = task_service.get_or_create("meeting/standup").unwrap();
+
+        let start = Utc::now() - chrono::Duration::hours(2);
+        let end = Utc::now() - chrono::Duration::hours(1);
+
+        session_service.log_session(task1.id, start, end).unwrap();
+
+        let start2 = Utc::now() - chrono::Duration::hours(4);
+        let end2 = Utc::now() - chrono::Duration::hours(3);
+        session_service.log_session(task2.id, start2, end2).unwrap();
+
+        let today = Utc::now().date_naive();
+        let coding_sessions = session_service
+            .get_sessions_by_tag("coding", today, today)
+            .unwrap();
+
+        assert_eq!(coding_sessions.len(), 1);
+        assert!(coding_sessions[0].task.name.contains("coding"));
+
+        let meeting_sessions = session_service
+            .get_sessions_by_tag("meeting", today, today)
+            .unwrap();
+        assert_eq!(meeting_sessions.len(), 1);
+        assert!(meeting_sessions[0].task.name.contains("meeting"));
     }
 }
