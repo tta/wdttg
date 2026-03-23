@@ -6,6 +6,8 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
@@ -89,6 +91,10 @@ pub struct TimelineView {
     terminal_width: u16,
     selected_index: usize,
     session_blocks: Vec<(usize, i64)>,
+    search_query: String,
+    search_active: bool,
+    filtered_session_blocks: Vec<(usize, i64)>,
+    filtered_selected_index: usize,
 }
 
 impl TimelineView {
@@ -111,7 +117,11 @@ impl TimelineView {
             zoom: ZoomLevel::All,
             terminal_width: 80,
             selected_index: 0,
-            session_blocks,
+            session_blocks: session_blocks.clone(),
+            search_query: String::new(),
+            search_active: false,
+            filtered_session_blocks: session_blocks,
+            filtered_selected_index: 0,
         }
     }
 
@@ -155,32 +165,120 @@ impl TimelineView {
                 if let Event::Key(key) =
                     event::read().map_err(|e| TimelineError::Terminal(e.to_string()))?
                 {
-                    match (key.modifiers, key.code) {
-                        (KeyModifiers::CONTROL, KeyCode::Char('c'))
-                        | (_, KeyCode::Esc)
-                        | (_, KeyCode::Char('q') | KeyCode::Char('Q')) => {
-                            return Ok(TimelineResult::Cancelled);
-                        }
-                        (_, KeyCode::Enter) => {
-                            if let Some((_, session_id)) = self.get_selected_session() {
-                                return Ok(TimelineResult::EditSession(session_id));
+                    if self.search_active {
+                        match (key.modifiers, key.code) {
+                            (KeyModifiers::CONTROL, KeyCode::Char('c')) | (_, KeyCode::Esc) => {
+                                self.cancel_search();
                             }
-                        }
-                        (_, KeyCode::Up) | (_, KeyCode::Char('k')) => {
-                            self.select_next_session();
-                        }
-                        (_, KeyCode::Down) | (_, KeyCode::Char('j')) => {
-                            self.select_prev_session();
-                        }
-                        (_, KeyCode::Char(c)) => {
-                            if let Some(zoom) = ZoomLevel::from_key(c) {
-                                self.zoom = zoom;
+                            (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
+                                self.select_next_filtered_session();
                             }
+                            (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
+                                self.select_prev_filtered_session();
+                            }
+                            (_, KeyCode::Enter) => {
+                                if let Some((_, session_id)) = self.get_selected_filtered_session()
+                                {
+                                    return Ok(TimelineResult::EditSession(session_id));
+                                }
+                            }
+                            (_, KeyCode::Backspace) => {
+                                self.search_query.pop();
+                                self.apply_search_filter();
+                            }
+                            (_, KeyCode::Char(c)) => {
+                                self.search_query.push(c);
+                                self.apply_search_filter();
+                            }
+                            _ => {}
                         }
-                        _ => {}
+                    } else {
+                        match (key.modifiers, key.code) {
+                            (KeyModifiers::CONTROL, KeyCode::Char('c'))
+                            | (_, KeyCode::Char('q') | KeyCode::Char('Q')) => {
+                                return Ok(TimelineResult::Cancelled);
+                            }
+                            (_, KeyCode::Esc) => {
+                                return Ok(TimelineResult::Cancelled);
+                            }
+                            (_, KeyCode::Char('/')) => {
+                                self.enter_search_mode();
+                            }
+                            (_, KeyCode::Enter) => {
+                                if let Some((_, session_id)) = self.get_selected_session() {
+                                    return Ok(TimelineResult::EditSession(session_id));
+                                }
+                            }
+                            (_, KeyCode::Up) | (_, KeyCode::Char('k')) => {
+                                self.select_next_session();
+                            }
+                            (_, KeyCode::Down) | (_, KeyCode::Char('j')) => {
+                                self.select_prev_session();
+                            }
+                            (_, KeyCode::Char(c)) => {
+                                if let Some(zoom) = ZoomLevel::from_key(c) {
+                                    self.zoom = zoom;
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                 }
             }
+        }
+    }
+
+    fn enter_search_mode(&mut self) {
+        self.search_active = true;
+        self.search_query.clear();
+        self.filtered_session_blocks = self.session_blocks.clone();
+        self.filtered_selected_index = 0;
+    }
+
+    fn cancel_search(&mut self) {
+        self.search_active = false;
+        self.search_query.clear();
+        self.filtered_session_blocks = self.session_blocks.clone();
+        self.filtered_selected_index = 0;
+    }
+
+    fn apply_search_filter(&mut self) {
+        if self.search_query.is_empty() {
+            self.filtered_session_blocks = self.session_blocks.clone();
+        } else {
+            let matcher = SkimMatcherV2::default();
+            let mut scored: Vec<(i64, (usize, i64))> = Vec::new();
+
+            for &(block_idx, session_id) in &self.session_blocks {
+                if let Some(block) = self.blocks.get(block_idx) {
+                    if let Some(task) = &block.task {
+                        if let Some(_score) = matcher.fuzzy_match(&task.name, &self.search_query) {
+                            scored.push((scored.len() as i64, (block_idx, session_id)));
+                        }
+                    }
+                }
+            }
+
+            self.filtered_session_blocks = scored.into_iter().map(|(_, pair)| pair).collect();
+        }
+        self.filtered_selected_index = 0;
+    }
+
+    fn get_selected_filtered_session(&self) -> Option<(usize, i64)> {
+        self.filtered_session_blocks
+            .get(self.filtered_selected_index)
+            .copied()
+    }
+
+    fn select_prev_filtered_session(&mut self) {
+        if self.filtered_selected_index > 0 {
+            self.filtered_selected_index -= 1;
+        }
+    }
+
+    fn select_next_filtered_session(&mut self) {
+        if self.filtered_selected_index + 1 < self.filtered_session_blocks.len() {
+            self.filtered_selected_index += 1;
         }
     }
 
@@ -268,7 +366,33 @@ impl TimelineView {
             visible_blocks.into_iter().filter(|b| !b.is_gap()).collect();
         session_blocks.sort_by(|a, b| b.start.cmp(&a.start));
 
-        if session_blocks.is_empty() {
+        if self.search_active {
+            let filtered_blocks: Vec<&TimeBlock> = session_blocks
+                .iter()
+                .filter(|b| {
+                    self.filtered_session_blocks.iter().any(|(idx, _)| {
+                        self.blocks
+                            .get(*idx)
+                            .is_some_and(|fb| fb.session_id == b.session_id && fb.start == b.start)
+                    })
+                })
+                .copied()
+                .collect();
+
+            if filtered_blocks.is_empty() {
+                lines.push(Line::styled(
+                    format!("No matches for \"{}\"", self.search_query),
+                    Style::default().fg(Color::DarkGray),
+                ));
+            } else {
+                let selected_session_id = self.get_selected_filtered_session().map(|(_, id)| id);
+                for block in &filtered_blocks {
+                    if let Some(line) = self.render_session_line(block, selected_session_id) {
+                        lines.push(line);
+                    }
+                }
+            }
+        } else if session_blocks.is_empty() {
             lines.push(Line::styled(
                 "No sessions in this time range",
                 Style::default().fg(Color::DarkGray),
@@ -456,17 +580,28 @@ impl TimelineView {
     }
 
     fn render_footer(&self, f: &mut Frame, area: Rect) {
-        let paragraph = Paragraph::new(Line::from(vec![
-            Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Select  "),
-            Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Edit  "),
-            Span::styled("[1-3/A]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Zoom  "),
-            Span::styled("[Q]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Quit"),
-        ]))
-        .block(Block::default().borders(Borders::ALL));
+        let paragraph = if self.search_active {
+            Paragraph::new(Line::from(vec![
+                Span::styled("Search: ", Style::default().fg(Color::Cyan)),
+                Span::styled(self.search_query.clone(), Style::default().fg(Color::White)),
+                Span::styled("█", Style::default().fg(Color::White)),
+            ]))
+            .block(Block::default().borders(Borders::ALL))
+        } else {
+            Paragraph::new(Line::from(vec![
+                Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Select  "),
+                Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Edit  "),
+                Span::styled("[1-3/A]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Zoom  "),
+                Span::styled("[/]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Search  "),
+                Span::styled("[Q]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Quit"),
+            ]))
+            .block(Block::default().borders(Borders::ALL))
+        };
 
         f.render_widget(paragraph, area);
     }
@@ -772,5 +907,71 @@ mod tests {
 
         assert!(view.session_blocks.is_empty());
         assert_eq!(view.get_selected_session(), None);
+    }
+
+    #[test]
+    fn test_timeline_view_enter_search_mode() {
+        let blocks = create_test_blocks();
+        let mut view = TimelineView::new(blocks, Utc::now().date_naive());
+
+        assert!(!view.search_active);
+        view.enter_search_mode();
+        assert!(view.search_active);
+        assert!(view.search_query.is_empty());
+    }
+
+    #[test]
+    fn test_timeline_view_cancel_search() {
+        let blocks = create_test_blocks();
+        let mut view = TimelineView::new(blocks, Utc::now().date_naive());
+
+        view.enter_search_mode();
+        view.search_query = "test".to_string();
+        view.cancel_search();
+        assert!(!view.search_active);
+        assert!(view.search_query.is_empty());
+    }
+
+    #[test]
+    fn test_timeline_view_search_filter() {
+        let blocks = create_test_blocks();
+        let mut view = TimelineView::new(blocks, Utc::now().date_naive());
+
+        view.enter_search_mode();
+        view.search_query = "task-1".to_string();
+        view.apply_search_filter();
+
+        assert_eq!(view.filtered_session_blocks.len(), 1);
+    }
+
+    #[test]
+    fn test_timeline_view_search_filter_empty_query() {
+        let blocks = create_test_blocks();
+        let mut view = TimelineView::new(blocks, Utc::now().date_naive());
+
+        view.search_query = String::new();
+        view.apply_search_filter();
+
+        assert_eq!(
+            view.filtered_session_blocks.len(),
+            view.session_blocks.len()
+        );
+    }
+
+    #[test]
+    fn test_timeline_view_filtered_session_navigation() {
+        let blocks = create_test_blocks();
+        let mut view = TimelineView::new(blocks, Utc::now().date_naive());
+
+        view.search_query = "task".to_string();
+        view.apply_search_filter();
+
+        assert_eq!(view.filtered_selected_index, 0);
+        view.select_next_filtered_session();
+        assert_eq!(view.filtered_selected_index, 1);
+        view.select_next_filtered_session();
+        assert_eq!(view.filtered_selected_index, 1);
+        view.select_prev_filtered_session();
+        assert_eq!(view.filtered_selected_index, 0);
     }
 }

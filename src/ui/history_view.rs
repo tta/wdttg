@@ -6,6 +6,8 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
@@ -92,16 +94,25 @@ pub struct HistoryView {
     period: Period,
     scroll_offset: usize,
     selected_session_idx: usize,
+    search_query: String,
+    search_active: bool,
+    filtered_indices: Vec<usize>,
+    filtered_selected_idx: usize,
 }
 
 impl HistoryView {
     pub fn new(sessions: Vec<SessionWithTask>, tag: String) -> Self {
+        let all_indices: Vec<usize> = (0..sessions.len()).collect();
         Self {
             sessions,
             tag,
             period: Period::Week,
             scroll_offset: 0,
             selected_session_idx: 0,
+            search_query: String::new(),
+            search_active: false,
+            filtered_indices: all_indices,
+            filtered_selected_idx: 0,
         }
     }
 
@@ -152,40 +163,123 @@ impl HistoryView {
                 if let Event::Key(key) =
                     event::read().map_err(|e| HistoryViewError::Terminal(e.to_string()))?
                 {
-                    match (key.modifiers, key.code) {
-                        (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
-                            return Ok(HistoryViewResult::Done);
-                        }
-                        (_, KeyCode::Esc) | (_, KeyCode::Char('q') | KeyCode::Char('Q')) => {
-                            return Ok(HistoryViewResult::Back);
-                        }
-                        (_, KeyCode::Up) => {
-                            self.select_prev_session();
-                        }
-                        (_, KeyCode::Down) => {
-                            self.select_next_session();
-                        }
-                        (_, KeyCode::Char('j')) => {
-                            self.select_next_session();
-                        }
-                        (_, KeyCode::Char('k')) => {
-                            self.select_prev_session();
-                        }
-                        (_, KeyCode::Enter) => {
-                            if let Some(session) = self.sessions.get(self.selected_session_idx) {
-                                return Ok(HistoryViewResult::EditSession(session.session.id));
+                    if self.search_active {
+                        match (key.modifiers, key.code) {
+                            (KeyModifiers::CONTROL, KeyCode::Char('c')) | (_, KeyCode::Esc) => {
+                                self.cancel_search();
                             }
-                        }
-                        (_, KeyCode::Char(c)) => {
-                            if let Some(new_period) = Period::from_key(c) {
-                                self.period = new_period;
-                                return Ok(HistoryViewResult::PeriodChanged(new_period));
+                            (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
+                                self.select_next_filtered_session();
                             }
+                            (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
+                                self.select_prev_filtered_session();
+                            }
+                            (_, KeyCode::Enter) => {
+                                if let Some(&idx) =
+                                    self.filtered_indices.get(self.filtered_selected_idx)
+                                {
+                                    if let Some(session) = self.sessions.get(idx) {
+                                        return Ok(HistoryViewResult::EditSession(
+                                            session.session.id,
+                                        ));
+                                    }
+                                }
+                            }
+                            (_, KeyCode::Backspace) => {
+                                self.search_query.pop();
+                                self.apply_search_filter();
+                            }
+                            (_, KeyCode::Char(c)) => {
+                                self.search_query.push(c);
+                                self.apply_search_filter();
+                            }
+                            _ => {}
                         }
-                        _ => {}
+                    } else {
+                        match (key.modifiers, key.code) {
+                            (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
+                                return Ok(HistoryViewResult::Done);
+                            }
+                            (_, KeyCode::Esc) | (_, KeyCode::Char('q') | KeyCode::Char('Q')) => {
+                                return Ok(HistoryViewResult::Back);
+                            }
+                            (_, KeyCode::Char('/')) => {
+                                self.enter_search_mode();
+                            }
+                            (_, KeyCode::Up) => {
+                                self.select_prev_session();
+                            }
+                            (_, KeyCode::Down) => {
+                                self.select_next_session();
+                            }
+                            (_, KeyCode::Char('j')) => {
+                                self.select_next_session();
+                            }
+                            (_, KeyCode::Char('k')) => {
+                                self.select_prev_session();
+                            }
+                            (_, KeyCode::Enter) => {
+                                if let Some(session) = self.sessions.get(self.selected_session_idx)
+                                {
+                                    return Ok(HistoryViewResult::EditSession(session.session.id));
+                                }
+                            }
+                            (_, KeyCode::Char(c)) => {
+                                if let Some(new_period) = Period::from_key(c) {
+                                    self.period = new_period;
+                                    return Ok(HistoryViewResult::PeriodChanged(new_period));
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                 }
             }
+        }
+    }
+
+    fn enter_search_mode(&mut self) {
+        self.search_active = true;
+        self.search_query.clear();
+        self.filtered_indices = (0..self.sessions.len()).collect();
+        self.filtered_selected_idx = 0;
+    }
+
+    fn cancel_search(&mut self) {
+        self.search_active = false;
+        self.search_query.clear();
+        self.filtered_indices = (0..self.sessions.len()).collect();
+        self.filtered_selected_idx = 0;
+    }
+
+    fn apply_search_filter(&mut self) {
+        if self.search_query.is_empty() {
+            self.filtered_indices = (0..self.sessions.len()).collect();
+        } else {
+            let matcher = SkimMatcherV2::default();
+            self.filtered_indices = self
+                .sessions
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, swt)| {
+                    matcher
+                        .fuzzy_match(&swt.task.name, &self.search_query)
+                        .map(|_| idx)
+                })
+                .collect();
+        }
+        self.filtered_selected_idx = 0;
+    }
+
+    fn select_prev_filtered_session(&mut self) {
+        if self.filtered_selected_idx > 0 {
+            self.filtered_selected_idx -= 1;
+        }
+    }
+
+    fn select_next_filtered_session(&mut self) {
+        if self.filtered_selected_idx + 1 < self.filtered_indices.len() {
+            self.filtered_selected_idx += 1;
         }
     }
 
@@ -208,6 +302,20 @@ impl HistoryView {
             let local_start = Local.from_utc_datetime(&session.session.start_time.naive_utc());
             let date = local_start.date_naive();
             grouped.entry(date).or_default().push(session);
+        }
+
+        grouped
+    }
+
+    fn group_by_date_filtered(&self) -> BTreeMap<NaiveDate, Vec<&SessionWithTask>> {
+        let mut grouped: BTreeMap<NaiveDate, Vec<&SessionWithTask>> = BTreeMap::new();
+
+        for &idx in &self.filtered_indices {
+            if let Some(session) = self.sessions.get(idx) {
+                let local_start = Local.from_utc_datetime(&session.session.start_time.naive_utc());
+                let date = local_start.date_naive();
+                grouped.entry(date).or_default().push(session);
+            }
         }
 
         grouped
@@ -249,8 +357,17 @@ impl HistoryView {
                 format!("No sessions found for tag '{}' in this period", self.tag),
                 Style::default().fg(Color::DarkGray),
             ));
+        } else if self.search_active && self.filtered_indices.is_empty() {
+            lines.push(Line::styled(
+                format!("No matches for \"{}\"", self.search_query),
+                Style::default().fg(Color::DarkGray),
+            ));
         } else {
-            let grouped = self.group_by_date();
+            let grouped = if self.search_active {
+                self.group_by_date_filtered()
+            } else {
+                self.group_by_date()
+            };
             let mut current_line = 0;
             let visible_height = area.height as usize;
             let visible_lines =
@@ -288,10 +405,16 @@ impl HistoryView {
         offset: usize,
         max_lines: usize,
     ) -> Vec<(String, Vec<Line<'static>>)> {
-        let selected_session_id = self
-            .sessions
-            .get(self.selected_session_idx)
-            .map(|s| s.session.id);
+        let selected_session_id = if self.search_active {
+            self.filtered_indices
+                .get(self.filtered_selected_idx)
+                .and_then(|&idx| self.sessions.get(idx))
+                .map(|s| s.session.id)
+        } else {
+            self.sessions
+                .get(self.selected_session_idx)
+                .map(|s| s.session.id)
+        };
 
         let mut result = Vec::new();
         let mut line_count = 0;
@@ -362,21 +485,32 @@ impl HistoryView {
     }
 
     fn render_footer(&self, f: &mut Frame, area: Rect) {
-        let paragraph = Paragraph::new(Line::from(vec![
-            Span::styled("[D]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Day  "),
-            Span::styled("[W]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Week  "),
-            Span::styled("[M]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Month  "),
-            Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Select  "),
-            Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Edit  "),
-            Span::styled("[Q/Esc]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Back"),
-        ]))
-        .block(Block::default().borders(Borders::ALL));
+        let paragraph = if self.search_active {
+            Paragraph::new(Line::from(vec![
+                Span::styled("Search: ", Style::default().fg(Color::Cyan)),
+                Span::styled(self.search_query.clone(), Style::default().fg(Color::White)),
+                Span::styled("█", Style::default().fg(Color::White)),
+            ]))
+            .block(Block::default().borders(Borders::ALL))
+        } else {
+            Paragraph::new(Line::from(vec![
+                Span::styled("[D]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Day  "),
+                Span::styled("[W]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Week  "),
+                Span::styled("[M]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Month  "),
+                Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Select  "),
+                Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Edit  "),
+                Span::styled("[/]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Search  "),
+                Span::styled("[Q/Esc]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Back"),
+            ]))
+            .block(Block::default().borders(Borders::ALL))
+        };
 
         f.render_widget(paragraph, area);
     }
@@ -541,5 +675,84 @@ mod tests {
         let view = HistoryView::new(sessions, "test".to_string()).with_period(Period::Month);
 
         assert_eq!(view.period(), Period::Month);
+    }
+
+    #[test]
+    fn test_history_view_enter_search_mode() {
+        let sessions = vec![
+            create_test_session_with_task(1, "task-1"),
+            create_test_session_with_task(2, "task-2"),
+        ];
+        let mut view = HistoryView::new(sessions, "test".to_string());
+
+        assert!(!view.search_active);
+        view.enter_search_mode();
+        assert!(view.search_active);
+        assert!(view.search_query.is_empty());
+        assert_eq!(view.filtered_indices.len(), 2);
+    }
+
+    #[test]
+    fn test_history_view_cancel_search() {
+        let sessions = vec![create_test_session_with_task(1, "task-1")];
+        let mut view = HistoryView::new(sessions, "test".to_string());
+
+        view.enter_search_mode();
+        view.search_query = "test".to_string();
+        view.cancel_search();
+        assert!(!view.search_active);
+        assert!(view.search_query.is_empty());
+    }
+
+    #[test]
+    fn test_history_view_search_filter() {
+        let sessions = vec![
+            create_test_session_with_task(1, "meeting-standup"),
+            create_test_session_with_task(2, "code-review"),
+            create_test_session_with_task(3, "meeting-sync"),
+        ];
+        let mut view = HistoryView::new(sessions, "test".to_string());
+
+        view.search_query = "meeting".to_string();
+        view.apply_search_filter();
+
+        assert_eq!(view.filtered_indices.len(), 2);
+    }
+
+    #[test]
+    fn test_history_view_search_filter_empty_query() {
+        let sessions = vec![
+            create_test_session_with_task(1, "task-1"),
+            create_test_session_with_task(2, "task-2"),
+        ];
+        let mut view = HistoryView::new(sessions, "test".to_string());
+
+        view.search_query = String::new();
+        view.apply_search_filter();
+
+        assert_eq!(view.filtered_indices.len(), 2);
+    }
+
+    #[test]
+    fn test_history_view_filtered_session_navigation() {
+        let sessions = vec![
+            create_test_session_with_task(1, "task-1"),
+            create_test_session_with_task(2, "task-2"),
+            create_test_session_with_task(3, "task-3"),
+        ];
+        let mut view = HistoryView::new(sessions, "test".to_string());
+
+        view.search_query = "task".to_string();
+        view.apply_search_filter();
+
+        assert_eq!(view.filtered_selected_idx, 0);
+        view.select_next_filtered_session();
+        assert_eq!(view.filtered_selected_idx, 1);
+        view.select_next_filtered_session();
+        assert_eq!(view.filtered_selected_idx, 2);
+        view.select_next_filtered_session();
+        assert_eq!(view.filtered_selected_idx, 2);
+        view.select_prev_filtered_session();
+        assert_eq!(view.filtered_selected_idx, 1);
     }
 }
