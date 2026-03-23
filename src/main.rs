@@ -4,8 +4,8 @@ use wdttg::ui::{
     edit_task, select_em_quadrant, EditFormResult, EmSelectorResult, PickerResult, TaskPicker,
 };
 use wdttg::{
-    cli, parse_relative_time, Commands, Database, EmQuadrant, SessionService, TaskService,
-    TaskStatus,
+    cli, parse_date, parse_period, parse_relative_time, Commands, Database, EmQuadrant,
+    SessionService, TaskService, TaskStatus,
 };
 
 fn format_duration(duration: chrono::Duration) -> String {
@@ -597,6 +597,236 @@ fn handle_log(
     Ok(())
 }
 
+fn handle_report_quadrant(period: &str, db: &Arc<Database>) -> Result<(), String> {
+    let session_service = SessionService::new(Arc::clone(db));
+    let (start, end) = parse_period(period).map_err(|e| e.to_string())?;
+
+    let quadrant_times = session_service
+        .get_quadrant_time(start, end)
+        .map_err(|e| e.to_string())?;
+
+    if quadrant_times.is_empty() {
+        println!("No sessions found for period: {}", period);
+        return Ok(());
+    }
+
+    let total_seconds: i64 = quadrant_times.iter().map(|qt| qt.total_seconds).sum();
+
+    println!("Time by EM Quadrant ({} to {})", start, end);
+    println!("{}", "=".repeat(50));
+
+    for qt in &quadrant_times {
+        let percentage = if total_seconds > 0 {
+            (qt.total_seconds as f64 / total_seconds as f64) * 100.0
+        } else {
+            0.0
+        };
+        println!(
+            "{}: {} ({:.1}%) - {}",
+            qt.quadrant.tag(),
+            format_duration(chrono::Duration::seconds(qt.total_seconds)),
+            percentage,
+            qt.quadrant.description()
+        );
+    }
+
+    println!("{}", "-".repeat(50));
+    println!(
+        "Total: {}",
+        format_duration(chrono::Duration::seconds(total_seconds))
+    );
+
+    Ok(())
+}
+
+fn handle_report_task(period: &str, db: &Arc<Database>) -> Result<(), String> {
+    let session_service = SessionService::new(Arc::clone(db));
+    let (start, end) = parse_period(period).map_err(|e| e.to_string())?;
+
+    let task_times = session_service
+        .get_task_time(start, end)
+        .map_err(|e| e.to_string())?;
+
+    if task_times.is_empty() {
+        println!("No sessions found for period: {}", period);
+        return Ok(());
+    }
+
+    let total_seconds: i64 = task_times.iter().map(|tt| tt.total_seconds).sum();
+
+    println!("Time by Task ({} to {})", start, end);
+    println!("{}", "=".repeat(50));
+
+    for tt in &task_times {
+        let percentage = if total_seconds > 0 {
+            (tt.total_seconds as f64 / total_seconds as f64) * 100.0
+        } else {
+            0.0
+        };
+        println!(
+            "{:<30} {:>10} ({:>5.1}%) {} session{}",
+            tt.task_name,
+            format_duration(chrono::Duration::seconds(tt.total_seconds)),
+            percentage,
+            tt.session_count,
+            if tt.session_count == 1 { "" } else { "s" }
+        );
+    }
+
+    println!("{}", "-".repeat(50));
+    println!(
+        "Total: {} across {} task{}",
+        format_duration(chrono::Duration::seconds(total_seconds)),
+        task_times.len(),
+        if task_times.len() == 1 { "" } else { "s" }
+    );
+
+    Ok(())
+}
+
+fn handle_report_tag(period: &str, db: &Arc<Database>) -> Result<(), String> {
+    let session_service = SessionService::new(Arc::clone(db));
+    let (start, end) = parse_period(period).map_err(|e| e.to_string())?;
+
+    let tag_times = session_service
+        .get_tag_time(start, end)
+        .map_err(|e| e.to_string())?;
+
+    if tag_times.is_empty() {
+        println!("No tagged sessions found for period: {}", period);
+        return Ok(());
+    }
+
+    let total_seconds: i64 = tag_times.iter().map(|tt| tt.total_seconds).sum();
+
+    println!("Time by Tag ({} to {})", start, end);
+    println!("{}", "=".repeat(50));
+
+    for tt in &tag_times {
+        let percentage = if total_seconds > 0 {
+            (tt.total_seconds as f64 / total_seconds as f64) * 100.0
+        } else {
+            0.0
+        };
+        println!(
+            "#{:<29} {:>10} ({:>5.1}%)",
+            tt.tag,
+            format_duration(chrono::Duration::seconds(tt.total_seconds)),
+            percentage
+        );
+    }
+
+    println!("{}", "-".repeat(50));
+    println!(
+        "Total: {} across {} tag{}",
+        format_duration(chrono::Duration::seconds(total_seconds)),
+        tag_times.len(),
+        if tag_times.len() == 1 { "" } else { "s" }
+    );
+
+    Ok(())
+}
+
+fn handle_report_timeline(date: &str, db: &Arc<Database>) -> Result<(), String> {
+    let session_service = SessionService::new(Arc::clone(db));
+    let date = parse_date(date).map_err(|e| e.to_string())?;
+
+    let sessions = session_service.get_day(date).map_err(|e| e.to_string())?;
+
+    if sessions.is_empty() {
+        println!("No sessions found for: {}", date);
+        return Ok(());
+    }
+
+    println!("Timeline for {}", date);
+    println!("{}", "=".repeat(60));
+
+    let mut total_seconds: i64 = 0;
+
+    for swt in &sessions {
+        let start_time = swt.session.start_time.format("%H:%M");
+        let end_time = swt
+            .session
+            .end_time
+            .map(|t| t.format("%H:%M").to_string())
+            .unwrap_or_else(|| "now".to_string());
+        let em_tag = swt.task.em_quadrant().tag();
+
+        if let Some(seconds) = swt.duration_seconds() {
+            total_seconds += seconds;
+            println!(
+                "{} - {} [{}] {} {}",
+                start_time,
+                end_time,
+                format_duration(chrono::Duration::seconds(seconds)),
+                swt.task.name,
+                em_tag
+            );
+        } else {
+            println!(
+                "{} - {} [active] {} {}",
+                start_time, end_time, swt.task.name, em_tag
+            );
+        }
+    }
+
+    println!("{}", "-".repeat(60));
+    println!(
+        "Total: {} across {} session{}",
+        format_duration(chrono::Duration::seconds(total_seconds)),
+        sessions.len(),
+        if sessions.len() == 1 { "" } else { "s" }
+    );
+
+    Ok(())
+}
+
+fn handle_report_history(limit: usize, db: &Arc<Database>) -> Result<(), String> {
+    let session_service = SessionService::new(Arc::clone(db));
+
+    let sessions = session_service
+        .get_recent(limit as i64)
+        .map_err(|e| e.to_string())?;
+
+    if sessions.is_empty() {
+        println!("No sessions found");
+        return Ok(());
+    }
+
+    println!("Recent Sessions (last {})", limit);
+    println!("{}", "=".repeat(60));
+
+    for swt in &sessions {
+        let date = swt.session.start_time.format("%Y-%m-%d");
+        let start_time = swt.session.start_time.format("%H:%M");
+        let end_time = swt
+            .session
+            .end_time
+            .map(|t| t.format("%H:%M").to_string())
+            .unwrap_or_else(|| "active".to_string());
+        let em_tag = swt.task.em_quadrant().tag();
+
+        if let Some(seconds) = swt.duration_seconds() {
+            println!(
+                "{} {}-{} [{}] {} {}",
+                date,
+                start_time,
+                end_time,
+                format_duration(chrono::Duration::seconds(seconds)),
+                swt.task.name,
+                em_tag
+            );
+        } else {
+            println!(
+                "{} {}-{} [active] {} {}",
+                date, start_time, end_time, swt.task.name, em_tag
+            );
+        }
+    }
+
+    Ok(())
+}
+
 fn main() {
     let cli = cli::parse();
 
@@ -642,26 +872,11 @@ fn main() {
             &db,
         ),
         Commands::Report { report_type } => match report_type {
-            wdttg::ReportCommands::Quadrant { period } => {
-                println!("Report quadrant: {} (not implemented)", period);
-                Ok(())
-            }
-            wdttg::ReportCommands::Task { period } => {
-                println!("Report task: {} (not implemented)", period);
-                Ok(())
-            }
-            wdttg::ReportCommands::Tag { period } => {
-                println!("Report tag: {} (not implemented)", period);
-                Ok(())
-            }
-            wdttg::ReportCommands::Timeline { date } => {
-                println!("Report timeline: {} (not implemented)", date);
-                Ok(())
-            }
-            wdttg::ReportCommands::History { limit } => {
-                println!("Report history: limit={} (not implemented)", limit);
-                Ok(())
-            }
+            wdttg::ReportCommands::Quadrant { period } => handle_report_quadrant(&period, &db),
+            wdttg::ReportCommands::Task { period } => handle_report_task(&period, &db),
+            wdttg::ReportCommands::Tag { period } => handle_report_tag(&period, &db),
+            wdttg::ReportCommands::Timeline { date } => handle_report_timeline(&date, &db),
+            wdttg::ReportCommands::History { limit } => handle_report_history(limit, &db),
         },
         Commands::Backup { keep } => {
             println!("Backup: keep={} (not implemented)", keep);
