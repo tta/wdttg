@@ -1,4 +1,4 @@
-use chrono::{DateTime, NaiveDate, NaiveTime, Utc};
+use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone, Utc};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -40,10 +40,10 @@ fn split_number_and_unit(input: &str) -> Option<(i64, &str)> {
 
 pub fn parse_relative_time(input: &str) -> Result<DateTime<Utc>> {
     let input = input.trim().to_lowercase();
-    let now = Utc::now();
+    let now = Local::now();
 
     if input == "now" {
-        return Ok(now);
+        return Ok(now.with_timezone(&Utc));
     }
 
     if let Some(rest) = input.strip_suffix(" ago") {
@@ -56,7 +56,7 @@ pub fn parse_relative_time(input: &str) -> Result<DateTime<Utc>> {
                 "w" | "week" | "weeks" => chrono::Duration::weeks(amount),
                 _ => return Err(TimeParseError::InvalidFormat(input)),
             };
-            return Ok(now - duration);
+            return Ok((now - duration).with_timezone(&Utc));
         }
     }
 
@@ -69,14 +69,14 @@ pub fn parse_relative_time(input: &str) -> Result<DateTime<Utc>> {
             "w" | "week" | "weeks" => chrono::Duration::weeks(amount),
             _ => return Err(TimeParseError::InvalidFormat(input)),
         };
-        return Ok(now - duration);
+        return Ok((now - duration).with_timezone(&Utc));
     }
 
     if input.starts_with("yesterday") {
         let rest = input.strip_prefix("yesterday").unwrap_or("").trim();
         if rest.is_empty() {
             let yesterday = now.date_naive() - chrono::Duration::days(1);
-            return Ok(datetime_from_date_and_time(
+            return Ok(datetime_from_local_date_and_time(
                 yesterday,
                 NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
             ));
@@ -84,14 +84,14 @@ pub fn parse_relative_time(input: &str) -> Result<DateTime<Utc>> {
 
         if let Ok(time) = NaiveTime::parse_from_str(rest, "%H:%M") {
             let yesterday = now.date_naive() - chrono::Duration::days(1);
-            return Ok(datetime_from_date_and_time(yesterday, time));
+            return Ok(datetime_from_local_date_and_time(yesterday, time));
         }
 
         if let Some((hour_str, min_str)) = rest.split_once(':') {
             if let (Ok(hour), Ok(min)) = (hour_str.parse::<u32>(), min_str.parse::<u32>()) {
                 if let Some(time) = NaiveTime::from_hms_opt(hour, min, 0) {
                     let yesterday = now.date_naive() - chrono::Duration::days(1);
-                    return Ok(datetime_from_date_and_time(yesterday, time));
+                    return Ok(datetime_from_local_date_and_time(yesterday, time));
                 }
             }
         }
@@ -99,9 +99,9 @@ pub fn parse_relative_time(input: &str) -> Result<DateTime<Utc>> {
 
     if let Ok(time) = NaiveTime::parse_from_str(&input, "%H:%M") {
         let today = now.date_naive();
-        let dt = datetime_from_date_and_time(today, time);
-        if dt > now {
-            return Ok(datetime_from_date_and_time(
+        let dt = datetime_from_local_date_and_time(today, time);
+        if dt > now.with_timezone(&Utc) {
+            return Ok(datetime_from_local_date_and_time(
                 today - chrono::Duration::days(1),
                 time,
             ));
@@ -113,9 +113,9 @@ pub fn parse_relative_time(input: &str) -> Result<DateTime<Utc>> {
         if let (Ok(hour), Ok(min)) = (hour_str.parse::<u32>(), min_str.parse::<u32>()) {
             if let Some(time) = NaiveTime::from_hms_opt(hour, min, 0) {
                 let today = now.date_naive();
-                let dt = datetime_from_date_and_time(today, time);
-                if dt > now {
-                    return Ok(datetime_from_date_and_time(
+                let dt = datetime_from_local_date_and_time(today, time);
+                if dt > now.with_timezone(&Utc) {
+                    return Ok(datetime_from_local_date_and_time(
                         today - chrono::Duration::days(1),
                         time,
                     ));
@@ -126,7 +126,7 @@ pub fn parse_relative_time(input: &str) -> Result<DateTime<Utc>> {
     }
 
     if let Ok(date) = NaiveDate::parse_from_str(&input, "%Y-%m-%d") {
-        return Ok(datetime_from_date_and_time(
+        return Ok(datetime_from_local_date_and_time(
             date,
             NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
         ));
@@ -138,23 +138,36 @@ pub fn parse_relative_time(input: &str) -> Result<DateTime<Utc>> {
     }
 
     if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&input, "%Y-%m-%d %H:%M") {
-        return Ok(dt.and_utc());
+        return Ok(Local
+            .from_local_datetime(&dt)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc));
     }
 
     if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&input, "%Y-%m-%d %H:%M:%S") {
-        return Ok(dt.and_utc());
+        return Ok(Local
+            .from_local_datetime(&dt)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc));
     }
 
     Err(TimeParseError::InvalidFormat(input))
 }
 
-fn datetime_from_date_and_time(date: NaiveDate, time: NaiveTime) -> DateTime<Utc> {
-    chrono::NaiveDateTime::new(date, time).and_utc()
+fn datetime_from_local_date_and_time(date: NaiveDate, time: NaiveTime) -> DateTime<Utc> {
+    let naive = chrono::NaiveDateTime::new(date, time);
+    Local
+        .from_local_datetime(&naive)
+        .single()
+        .unwrap()
+        .with_timezone(&Utc)
 }
 
 pub fn parse_date(input: &str) -> Result<NaiveDate> {
     let input = input.trim().to_lowercase();
-    let today = Utc::now().date_naive();
+    let today = Local::now().date_naive();
 
     match input.as_str() {
         "today" => Ok(today),
@@ -166,7 +179,7 @@ pub fn parse_date(input: &str) -> Result<NaiveDate> {
 
 pub fn parse_period(period: &str) -> Result<(NaiveDate, NaiveDate)> {
     let period = period.trim().to_lowercase();
-    let today = Utc::now().date_naive();
+    let today = Local::now().date_naive();
 
     match period.as_str() {
         "day" | "today" => Ok((today, today)),
@@ -195,41 +208,41 @@ mod tests {
 
     #[test]
     fn test_parse_relative_time_now() {
-        let now = Utc::now();
+        let now = Local::now();
         let parsed = parse_relative_time("now").unwrap();
-        let diff = (parsed - now).num_seconds().abs();
+        let diff = (parsed - now.with_timezone(&Utc)).num_seconds().abs();
         assert!(diff < 2);
     }
 
     #[test]
     fn test_parse_relative_time_hours_ago() {
         let result = parse_relative_time("2h ago").unwrap();
-        let expected = Utc::now() - chrono::Duration::hours(2);
-        let diff = (result - expected).num_seconds().abs();
+        let expected = Local::now() - chrono::Duration::hours(2);
+        let diff = (result - expected.with_timezone(&Utc)).num_seconds().abs();
         assert!(diff < 2);
     }
 
     #[test]
     fn test_parse_relative_time_minutes_ago() {
         let result = parse_relative_time("30m ago").unwrap();
-        let expected = Utc::now() - chrono::Duration::minutes(30);
-        let diff = (result - expected).num_seconds().abs();
+        let expected = Local::now() - chrono::Duration::minutes(30);
+        let diff = (result - expected.with_timezone(&Utc)).num_seconds().abs();
         assert!(diff < 2);
     }
 
     #[test]
     fn test_parse_relative_time_days_ago() {
         let result = parse_relative_time("2d ago").unwrap();
-        let expected = Utc::now() - chrono::Duration::days(2);
-        let diff = (result - expected).num_seconds().abs();
+        let expected = Local::now() - chrono::Duration::days(2);
+        let diff = (result - expected.with_timezone(&Utc)).num_seconds().abs();
         assert!(diff < 2);
     }
 
     #[test]
     fn test_parse_relative_time_hour_only() {
         let result = parse_relative_time("2h").unwrap();
-        let expected = Utc::now() - chrono::Duration::hours(2);
-        let diff = (result - expected).num_seconds().abs();
+        let expected = Local::now() - chrono::Duration::hours(2);
+        let diff = (result - expected.with_timezone(&Utc)).num_seconds().abs();
         assert!(diff < 2);
     }
 
@@ -241,21 +254,22 @@ mod tests {
     #[test]
     fn test_parse_relative_time_hm_without_leading_zero() {
         let result = parse_relative_time("9:30").unwrap();
-        assert_eq!(result.hour(), 9);
-        assert_eq!(result.minute(), 30);
+        let local_result = result.with_timezone(&Local);
+        assert_eq!(local_result.hour(), 9);
+        assert_eq!(local_result.minute(), 30);
     }
 
     #[test]
     fn test_parse_date_today() {
         let result = parse_date("today").unwrap();
-        let today = Utc::now().date_naive();
+        let today = Local::now().date_naive();
         assert_eq!(result, today);
     }
 
     #[test]
     fn test_parse_date_yesterday() {
         let result = parse_date("yesterday").unwrap();
-        let yesterday = Utc::now().date_naive() - chrono::Duration::days(1);
+        let yesterday = Local::now().date_naive() - chrono::Duration::days(1);
         assert_eq!(result, yesterday);
     }
 
@@ -268,7 +282,7 @@ mod tests {
     #[test]
     fn test_parse_period_day() {
         let (start, end) = parse_period("day").unwrap();
-        let today = Utc::now().date_naive();
+        let today = Local::now().date_naive();
         assert_eq!(start, today);
         assert_eq!(end, today);
     }
@@ -276,7 +290,7 @@ mod tests {
     #[test]
     fn test_parse_period_week() {
         let (start, end) = parse_period("week").unwrap();
-        let today = Utc::now().date_naive();
+        let today = Local::now().date_naive();
         assert_eq!(end, today);
         assert_eq!((end - start).num_days(), 6);
     }
@@ -284,7 +298,7 @@ mod tests {
     #[test]
     fn test_parse_period_month() {
         let (start, end) = parse_period("month").unwrap();
-        let today = Utc::now().date_naive();
+        let today = Local::now().date_naive();
         assert_eq!(end, today);
         assert_eq!((end - start).num_days(), 29);
     }
