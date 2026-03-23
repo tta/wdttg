@@ -122,6 +122,22 @@ fn test_reopen_existing_database() {
 mod cli_tests {
     use assert_cmd::Command;
     use predicates::prelude::*;
+    use std::sync::Mutex;
+    use tempfile::TempDir;
+
+    static DB_LOCK: Mutex<()> = Mutex::new(());
+
+    fn with_temp_db<F>(test: F)
+    where
+        F: FnOnce(&TempDir, &std::path::Path),
+    {
+        let _lock = DB_LOCK.lock().unwrap();
+        let temp_dir = TempDir::new().expect("Failed to create temp dir");
+        let db_path = temp_dir.path().join("test.db");
+        std::env::set_var("WDTTG_DB", &db_path);
+        test(&temp_dir, &db_path);
+        std::env::remove_var("WDTTG_DB");
+    }
 
     #[test]
     fn test_help_shows_all_commands() {
@@ -154,11 +170,14 @@ mod cli_tests {
 
     #[test]
     fn test_no_prompt_flag_parsed() {
-        let mut cmd = Command::cargo_bin("wdttg").unwrap();
-        cmd.args(["--no-prompt", "start", "test"])
-            .assert()
-            .success()
-            .stdout(predicate::str::contains("Start: test"));
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd = Command::cargo_bin("wdttg").unwrap();
+            cmd.args(["--no-prompt", "start", "test", "--em", "11"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("Started: test"))
+                .stdout(predicate::str::contains("#em11"));
+        });
     }
 
     #[test]
@@ -181,5 +200,118 @@ mod cli_tests {
             .stdout(predicate::str::contains("tag"))
             .stdout(predicate::str::contains("timeline"))
             .stdout(predicate::str::contains("history"));
+    }
+
+    #[test]
+    fn test_start_creates_task_and_session() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd = Command::cargo_bin("wdttg").unwrap();
+            cmd.args(["--no-prompt", "start", "new-task", "--em", "01"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("Started: new-task"))
+                .stdout(predicate::str::contains("#em01"))
+                .stdout(predicate::str::contains("Session ID:"));
+        });
+    }
+
+    #[test]
+    fn test_start_with_existing_task_reuses_it() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd1 = Command::cargo_bin("wdttg").unwrap();
+            cmd1.args(["--no-prompt", "start", "existing-task", "--em", "11"])
+                .assert()
+                .success();
+
+            let mut cmd2 = Command::cargo_bin("wdttg").unwrap();
+            cmd2.args(["--no-prompt", "stop"]).assert().success();
+
+            let mut cmd3 = Command::cargo_bin("wdttg").unwrap();
+            cmd3.args(["--no-prompt", "start", "existing-task"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("Started: existing-task"))
+                .stdout(predicate::str::contains("#em11"));
+        });
+    }
+
+    #[test]
+    fn test_start_stops_previous_session() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd1 = Command::cargo_bin("wdttg").unwrap();
+            cmd1.args(["--no-prompt", "start", "task-one", "--em", "11"])
+                .assert()
+                .success();
+
+            let mut cmd2 = Command::cargo_bin("wdttg").unwrap();
+            cmd2.args(["--no-prompt", "start", "task-two", "--em", "01"])
+                .assert()
+                .success();
+
+            let mut cmd3 = Command::cargo_bin("wdttg").unwrap();
+            cmd3.args(["--no-prompt", "stop"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("Stopped: task-two"));
+        });
+    }
+
+    #[test]
+    fn test_stop_ends_session_and_shows_duration() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd1 = Command::cargo_bin("wdttg").unwrap();
+            cmd1.args(["--no-prompt", "start", "test-task", "--em", "11"])
+                .assert()
+                .success();
+
+            let mut cmd2 = Command::cargo_bin("wdttg").unwrap();
+            cmd2.args(["--no-prompt", "stop"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("Stopped: test-task"))
+                .stdout(predicate::str::contains("("))
+                .stdout(predicate::str::contains("Session ID:"));
+        });
+    }
+
+    #[test]
+    fn test_stop_no_active_timer() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd = Command::cargo_bin("wdttg").unwrap();
+            cmd.args(["--no-prompt", "stop"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("No active timer"));
+        });
+    }
+
+    #[test]
+    fn test_start_requires_em_for_new_task_in_non_interactive() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd = Command::cargo_bin("wdttg").unwrap();
+            cmd.args(["--no-prompt", "start", "new-task-without-em"])
+                .assert()
+                .failure()
+                .stderr(predicate::str::contains("EM quadrant required"));
+        });
+    }
+
+    #[test]
+    fn test_start_reuses_em_for_existing_task() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd1 = Command::cargo_bin("wdttg").unwrap();
+            cmd1.args(["--no-prompt", "start", "task-with-em", "--em", "10"])
+                .assert()
+                .success();
+
+            let mut cmd2 = Command::cargo_bin("wdttg").unwrap();
+            cmd2.args(["--no-prompt", "stop"]).assert().success();
+
+            let mut cmd3 = Command::cargo_bin("wdttg").unwrap();
+            cmd3.args(["--no-prompt", "start", "task-with-em"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("#em10"));
+        });
     }
 }

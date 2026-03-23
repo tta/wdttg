@@ -9,4 +9,4 @@ pub use db::{Database, DbError};
 pub use models::{
     EmQuadrant, QuadrantTime, Session, SessionWithTask, TagTime, Task, TaskStatus, TaskTime,
 };
-pub use services::{TaskService, TaskServiceError};
+pub use services::{SessionService, TaskService, TaskServiceError};
