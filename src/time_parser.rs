@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local, NaiveDate, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveTime, TimeZone, Utc};
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -57,6 +57,29 @@ pub fn parse_relative_time(input: &str) -> Result<DateTime<Utc>> {
                 _ => return Err(TimeParseError::InvalidFormat(input)),
             };
             return Ok((now - duration).with_timezone(&Utc));
+        }
+    }
+
+    // Try M/D H:MM format (e.g., "3/22 11:11") - before split_number_and_unit
+    if let Some((date_part, time_part)) = input.split_once(' ') {
+        if let Some((month, day)) = parse_month_day(date_part) {
+            if let Some(time) = parse_time_str(time_part) {
+                let year = now.year();
+                if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
+                    return Ok(datetime_from_local_date_and_time(date, time));
+                }
+            }
+        }
+    }
+
+    // Try M/D format (e.g., "3/22" - midnight)
+    if let Some((month, day)) = parse_month_day(&input) {
+        let year = now.year();
+        if let Some(date) = NaiveDate::from_ymd_opt(year, month, day) {
+            return Ok(datetime_from_local_date_and_time(
+                date,
+                NaiveTime::from_hms_opt(0, 0, 0).unwrap(),
+            ));
         }
     }
 
@@ -163,6 +186,34 @@ fn datetime_from_local_date_and_time(date: NaiveDate, time: NaiveTime) -> DateTi
         .single()
         .unwrap()
         .with_timezone(&Utc)
+}
+
+fn parse_month_day(input: &str) -> Option<(u32, u32)> {
+    let input = input.trim();
+    let (month_str, day_str) = input.split_once('/')?;
+    let month: u32 = month_str.parse().ok()?;
+    let day: u32 = day_str.parse().ok()?;
+    if month >= 1 && month <= 12 && day >= 1 && day <= 31 {
+        Some((month, day))
+    } else {
+        None
+    }
+}
+
+fn parse_time_str(input: &str) -> Option<NaiveTime> {
+    let input = input.trim();
+    if let Ok(time) = NaiveTime::parse_from_str(input, "%H:%M") {
+        return Some(time);
+    }
+    if let Ok(time) = NaiveTime::parse_from_str(input, "%H:%M:%S") {
+        return Some(time);
+    }
+    if let Some((hour_str, min_str)) = input.split_once(':') {
+        let hour: u32 = hour_str.parse().ok()?;
+        let min: u32 = min_str.parse().ok()?;
+        return NaiveTime::from_hms_opt(hour, min, 0);
+    }
+    None
 }
 
 pub fn parse_date(input: &str) -> Result<NaiveDate> {
@@ -301,5 +352,25 @@ mod tests {
         let today = Local::now().date_naive();
         assert_eq!(end, today);
         assert_eq!((end - start).num_days(), 29);
+    }
+
+    #[test]
+    fn test_parse_month_day_time() {
+        let result = parse_relative_time("3/22 11:30").unwrap();
+        let local_result = result.with_timezone(&Local);
+        assert_eq!(local_result.month(), 3);
+        assert_eq!(local_result.day(), 22);
+        assert_eq!(local_result.hour(), 11);
+        assert_eq!(local_result.minute(), 30);
+    }
+
+    #[test]
+    fn test_parse_month_day_only() {
+        let result = parse_relative_time("3/22").unwrap();
+        let local_result = result.with_timezone(&Local);
+        assert_eq!(local_result.month(), 3);
+        assert_eq!(local_result.day(), 22);
+        assert_eq!(local_result.hour(), 0);
+        assert_eq!(local_result.minute(), 0);
     }
 }

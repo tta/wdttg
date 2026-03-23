@@ -148,7 +148,18 @@ wdttg log --task "code review" --start "2h ago" --end "1h ago" --no-prompt
 
 # With specific times
 wdttg log --task "meeting" --start "2024-01-15 14:00" --end "2024-01-15 15:30" --no-prompt
+
+# With month/day format (current year)
+wdttg log --task "task" --start "3/22 11:00" --end "3/22 12:30" --no-prompt
 ```
+
+### Time Format Options
+
+The `--start` and `--end` flags accept:
+- Relative: `2h ago`, `30m ago`, `1d ago`
+- Time only: `14:30` (assumes today, or yesterday if in future)
+- Date + time: `2024-01-15 14:00`, `3/22 11:00`
+- Keywords: `now`, `yesterday`, `yesterday 14:00`
 
 ## History TUI
 

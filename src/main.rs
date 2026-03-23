@@ -578,7 +578,7 @@ fn handle_log(
     let start = if let Some(start_str) = start_arg {
         parse_relative_time(start_str).map_err(|e| e.to_string())?
     } else if is_interactive() && !no_prompt {
-        print!("Start time (e.g., '2h ago', '14:30', 'yesterday 09:00'): ");
+        print!("Start time (e.g., '2h ago', '14:30', '3/22 11:00'): ");
         use std::io::{self, Write};
         io::stdout().flush().unwrap();
         let mut input = String::new();
