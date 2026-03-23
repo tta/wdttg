@@ -63,6 +63,9 @@ pub enum Commands {
 
         #[arg(long)]
         end: Option<String>,
+
+        #[arg(long)]
+        em: Option<String>,
     },
 
     Report {

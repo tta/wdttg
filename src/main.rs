@@ -489,22 +489,26 @@ fn handle_log(
     task: Option<&str>,
     start_arg: Option<&str>,
     end_arg: Option<&str>,
+    em_arg: Option<&str>,
     no_prompt: bool,
     db: &Arc<Database>,
 ) -> Result<(), String> {
     let task_service = TaskService::new(Arc::clone(db));
     let session_service = SessionService::new(Arc::clone(db));
 
-    let task = if let Some(task_name) = task {
+    let (task, is_new_task) = if let Some(task_name) = task {
         if !task_name.is_empty() {
             match task_service
                 .get_by_name(task_name)
                 .map_err(|e| e.to_string())?
             {
-                Some(existing) => existing,
-                None => task_service
-                    .get_or_create(task_name)
-                    .map_err(|e| e.to_string())?,
+                Some(existing) => (existing, false),
+                None => {
+                    let created = task_service
+                        .get_or_create(task_name)
+                        .map_err(|e| e.to_string())?;
+                    (created, true)
+                }
             }
         } else if is_interactive() && !no_prompt {
             let tasks = task_service
@@ -512,10 +516,13 @@ fn handle_log(
                 .map_err(|e| e.to_string())?;
             let picker = TaskPicker::new(tasks);
             match picker.run().map_err(|e| e.to_string())? {
-                PickerResult::Selected(t) => t,
-                PickerResult::CreateNew(name) => task_service
-                    .get_or_create(&name)
-                    .map_err(|e| e.to_string())?,
+                PickerResult::Selected(t) => (t, false),
+                PickerResult::CreateNew(name) => {
+                    let created = task_service
+                        .get_or_create(&name)
+                        .map_err(|e| e.to_string())?;
+                    (created, true)
+                }
                 PickerResult::Cancelled => {
                     println!("Cancelled.");
                     return Ok(());
@@ -530,10 +537,13 @@ fn handle_log(
             .map_err(|e| e.to_string())?;
         let picker = TaskPicker::new(tasks);
         match picker.run().map_err(|e| e.to_string())? {
-            PickerResult::Selected(t) => t,
-            PickerResult::CreateNew(name) => task_service
-                .get_or_create(&name)
-                .map_err(|e| e.to_string())?,
+            PickerResult::Selected(t) => (t, false),
+            PickerResult::CreateNew(name) => {
+                let created = task_service
+                    .get_or_create(&name)
+                    .map_err(|e| e.to_string())?;
+                (created, true)
+            }
             PickerResult::Cancelled => {
                 println!("Cancelled.");
                 return Ok(());
@@ -542,6 +552,26 @@ fn handle_log(
     } else {
         return Err("Task name required in non-interactive mode".to_string());
     };
+
+    if is_new_task {
+        let quadrant = if let Some(em_str) = em_arg {
+            parse_em_arg(em_str)?
+        } else if is_interactive() && !no_prompt {
+            match prompt_em_quadrant() {
+                Some(q) => q,
+                None => {
+                    println!("Cancelled.");
+                    return Ok(());
+                }
+            }
+        } else {
+            return Err("EM quadrant required for new tasks. Use --em 00|01|10|11".to_string());
+        };
+
+        task_service
+            .set_em_quadrant(task.id, quadrant.is_urgent(), quadrant.is_important())
+            .map_err(|e| e.to_string())?;
+    }
 
     let now = chrono::Utc::now();
 
@@ -976,10 +1006,16 @@ fn main() {
             cli.no_prompt,
             &db,
         ),
-        Commands::Log { task, start, end } => handle_log(
+        Commands::Log {
+            task,
+            start,
+            end,
+            em,
+        } => handle_log(
             task.as_deref(),
             start.as_deref(),
             end.as_deref(),
+            em.as_deref(),
             cli.no_prompt,
             &db,
         ),
