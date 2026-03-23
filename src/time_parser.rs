@@ -30,7 +30,7 @@ fn split_number_and_unit(input: &str) -> Option<(i64, &str)> {
     let number_str = &input[..split_idx];
     let unit_str = input[split_idx..].trim_start();
 
-    if unit_str.is_empty() {
+    if unit_str.is_empty() || unit_str.starts_with(':') {
         return None;
     }
 
@@ -86,6 +86,15 @@ pub fn parse_relative_time(input: &str) -> Result<DateTime<Utc>> {
             let yesterday = now.date_naive() - chrono::Duration::days(1);
             return Ok(datetime_from_date_and_time(yesterday, time));
         }
+
+        if let Some((hour_str, min_str)) = rest.split_once(':') {
+            if let (Ok(hour), Ok(min)) = (hour_str.parse::<u32>(), min_str.parse::<u32>()) {
+                if let Some(time) = NaiveTime::from_hms_opt(hour, min, 0) {
+                    let yesterday = now.date_naive() - chrono::Duration::days(1);
+                    return Ok(datetime_from_date_and_time(yesterday, time));
+                }
+            }
+        }
     }
 
     if let Ok(time) = NaiveTime::parse_from_str(&input, "%H:%M") {
@@ -98,6 +107,22 @@ pub fn parse_relative_time(input: &str) -> Result<DateTime<Utc>> {
             ));
         }
         return Ok(dt);
+    }
+
+    if let Some((hour_str, min_str)) = input.split_once(':') {
+        if let (Ok(hour), Ok(min)) = (hour_str.parse::<u32>(), min_str.parse::<u32>()) {
+            if let Some(time) = NaiveTime::from_hms_opt(hour, min, 0) {
+                let today = now.date_naive();
+                let dt = datetime_from_date_and_time(today, time);
+                if dt > now {
+                    return Ok(datetime_from_date_and_time(
+                        today - chrono::Duration::days(1),
+                        time,
+                    ));
+                }
+                return Ok(dt);
+            }
+        }
     }
 
     if let Ok(date) = NaiveDate::parse_from_str(&input, "%Y-%m-%d") {
@@ -166,6 +191,7 @@ pub fn parse_period(period: &str) -> Result<(NaiveDate, NaiveDate)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chrono::Timelike;
 
     #[test]
     fn test_parse_relative_time_now() {
@@ -210,6 +236,13 @@ mod tests {
     #[test]
     fn test_parse_relative_time_invalid() {
         assert!(parse_relative_time("invalid").is_err());
+    }
+
+    #[test]
+    fn test_parse_relative_time_hm_without_leading_zero() {
+        let result = parse_relative_time("9:30").unwrap();
+        assert_eq!(result.hour(), 9);
+        assert_eq!(result.minute(), 30);
     }
 
     #[test]
