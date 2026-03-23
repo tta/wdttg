@@ -114,6 +114,23 @@ impl TaskService {
         Ok(tasks)
     }
 
+    pub fn get_non_archived_tasks(&self) -> Result<Vec<Task>> {
+        let conn = self.db.connection();
+
+        let mut stmt = conn.prepare(
+            "SELECT id, name, notes, em_urgent, em_important, status, recurring, created_at, updated_at
+             FROM tasks 
+             WHERE status != 'archived'
+             ORDER BY updated_at DESC",
+        )?;
+
+        let tasks = stmt
+            .query_map([], |row| self.row_to_task(&conn, row))?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(tasks)
+    }
+
     pub fn update(&self, task: &Task) -> Result<()> {
         let conn = self.db.connection();
 
@@ -472,5 +489,26 @@ mod tests {
         assert!(found.em_important);
         assert!(found.recurring);
         assert_eq!(found.tags, vec!["new-tag"]);
+    }
+
+    #[test]
+    fn test_get_non_archived_tasks() {
+        let service = create_test_service();
+
+        let active = service.get_or_create("active-task").unwrap();
+        let completed = service.get_or_create("completed-task").unwrap();
+        service
+            .set_status(completed.id, TaskStatus::Completed)
+            .unwrap();
+        let archived = service.get_or_create("archived-task").unwrap();
+        service
+            .set_status(archived.id, TaskStatus::Archived)
+            .unwrap();
+
+        let non_archived = service.get_non_archived_tasks().unwrap();
+
+        assert!(non_archived.iter().any(|t| t.id == active.id));
+        assert!(non_archived.iter().any(|t| t.id == completed.id));
+        assert!(!non_archived.iter().any(|t| t.id == archived.id));
     }
 }

@@ -363,4 +363,125 @@ mod cli_tests {
                 .stdout(predicate::str::contains("No active timer"));
         });
     }
+
+    #[test]
+    fn test_done_marks_last_task_completed() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd1 = Command::cargo_bin("wdttg").unwrap();
+            cmd1.args(["--no-prompt", "start", "task-to-complete", "--em", "11"])
+                .assert()
+                .success();
+
+            let mut cmd2 = Command::cargo_bin("wdttg").unwrap();
+            cmd2.args(["--no-prompt", "stop"]).assert().success();
+
+            let mut cmd3 = Command::cargo_bin("wdttg").unwrap();
+            cmd3.args(["--no-prompt", "done"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("Completed: task-to-complete"));
+        });
+    }
+
+    #[test]
+    fn test_done_no_sessions() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd = Command::cargo_bin("wdttg").unwrap();
+            cmd.args(["--no-prompt", "done"])
+                .assert()
+                .failure()
+                .stderr(predicate::str::contains("No sessions found"));
+        });
+    }
+
+    #[test]
+    fn test_reopen_task_by_name() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd1 = Command::cargo_bin("wdttg").unwrap();
+            cmd1.args(["--no-prompt", "start", "task-to-reopen", "--em", "11"])
+                .assert()
+                .success();
+
+            let mut cmd2 = Command::cargo_bin("wdttg").unwrap();
+            cmd2.args(["--no-prompt", "stop"]).assert().success();
+
+            let mut cmd3 = Command::cargo_bin("wdttg").unwrap();
+            cmd3.args(["--no-prompt", "done"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("Completed: task-to-reopen"));
+
+            let mut cmd4 = Command::cargo_bin("wdttg").unwrap();
+            cmd4.args(["--no-prompt", "reopen", "task-to-reopen"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("Reopened: task-to-reopen"));
+        });
+    }
+
+    #[test]
+    fn test_reopen_task_not_found() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd = Command::cargo_bin("wdttg").unwrap();
+            cmd.args(["--no-prompt", "reopen", "nonexistent-task"])
+                .assert()
+                .failure()
+                .stderr(predicate::str::contains("Task not found"));
+        });
+    }
+
+    #[test]
+    fn test_archive_task_by_name() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd1 = Command::cargo_bin("wdttg").unwrap();
+            cmd1.args(["--no-prompt", "start", "task-to-archive", "--em", "01"])
+                .assert()
+                .success();
+
+            let mut cmd2 = Command::cargo_bin("wdttg").unwrap();
+            cmd2.args(["--no-prompt", "stop"]).assert().success();
+
+            let mut cmd3 = Command::cargo_bin("wdttg").unwrap();
+            cmd3.args(["--no-prompt", "archive", "task-to-archive"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("Archived: task-to-archive"));
+        });
+    }
+
+    #[test]
+    fn test_archive_task_not_found() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd = Command::cargo_bin("wdttg").unwrap();
+            cmd.args(["--no-prompt", "archive", "nonexistent-task"])
+                .assert()
+                .failure()
+                .stderr(predicate::str::contains("Task not found"));
+        });
+    }
+
+    #[test]
+    fn test_completed_task_not_in_picker() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd1 = Command::cargo_bin("wdttg").unwrap();
+            cmd1.args(["--no-prompt", "start", "task-to-complete-2", "--em", "11"])
+                .assert()
+                .success();
+
+            let mut cmd2 = Command::cargo_bin("wdttg").unwrap();
+            cmd2.args(["--no-prompt", "stop"]).assert().success();
+
+            let mut cmd3 = Command::cargo_bin("wdttg").unwrap();
+            cmd3.args(["--no-prompt", "done"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("Completed: task-to-complete-2"));
+
+            let mut cmd4 = Command::cargo_bin("wdttg").unwrap();
+            cmd4.args(["--no-prompt", "start", "task-to-complete-2"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("Started: task-to-complete-2"));
+        });
+    }
 }

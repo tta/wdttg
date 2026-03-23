@@ -199,6 +199,27 @@ impl SessionService {
         }
     }
 
+    pub fn get_last_session_task(&self) -> Result<Option<SessionWithTask>> {
+        let conn = self.db.connection();
+
+        let result = conn.query_row(
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.created_at,
+                    t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
+             FROM sessions s
+             INNER JOIN tasks t ON s.task_id = t.id
+             ORDER BY s.start_time DESC
+             LIMIT 1",
+            [],
+            |row| self.row_to_session_with_task(row),
+        );
+
+        match result {
+            Ok(session) => Ok(Some(session)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
     fn row_to_session(&self, row: &rusqlite::Row) -> std::result::Result<Session, rusqlite::Error> {
         let id: i64 = row.get(0)?;
         let task_id: i64 = row.get(1)?;
@@ -449,5 +470,32 @@ mod tests {
 
         let last = session_service.get_last_for_task(task.id).unwrap();
         assert!(last.is_some());
+    }
+
+    #[test]
+    fn test_get_last_session_task() {
+        let (session_service, task_service) = create_test_services();
+
+        let task1 = task_service.get_or_create("task-1").unwrap();
+        let task2 = task_service.get_or_create("task-2").unwrap();
+
+        session_service.start(task1.id).unwrap();
+        session_service.stop().unwrap();
+
+        session_service.start(task2.id).unwrap();
+        session_service.stop().unwrap();
+
+        let last = session_service.get_last_session_task().unwrap();
+        assert!(last.is_some());
+        let last = last.unwrap();
+        assert_eq!(last.task.name, "task-2");
+    }
+
+    #[test]
+    fn test_get_last_session_task_no_sessions() {
+        let (session_service, _) = create_test_services();
+
+        let last = session_service.get_last_session_task().unwrap();
+        assert!(last.is_none());
     }
 }

@@ -171,6 +171,162 @@ fn handle_stop(db: &Arc<Database>) -> Result<(), String> {
     Ok(())
 }
 
+fn handle_done(db: &Arc<Database>) -> Result<(), String> {
+    let session_service = SessionService::new(Arc::clone(db));
+    let task_service = TaskService::new(Arc::clone(db));
+
+    let last_session = session_service
+        .get_last_session_task()
+        .map_err(|e| e.to_string())?;
+
+    match last_session {
+        Some(session_with_task) => {
+            let task = &session_with_task.task;
+
+            task_service
+                .set_status(task.id, wdttg::TaskStatus::Completed)
+                .map_err(|e| e.to_string())?;
+
+            println!("Completed: {}", task.name);
+        }
+        None => {
+            return Err("No sessions found. Start tracking time first.".to_string());
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_reopen(query: Option<&str>, no_prompt: bool, db: &Arc<Database>) -> Result<(), String> {
+    let task_service = TaskService::new(Arc::clone(db));
+
+    let task = if let Some(query_str) = query {
+        if !query_str.is_empty() {
+            task_service
+                .get_by_name(query_str)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("Task not found: {}", query_str))?
+        } else if is_interactive() && !no_prompt {
+            let completed_tasks = task_service
+                .search_completed("")
+                .map_err(|e| e.to_string())?;
+
+            if completed_tasks.is_empty() {
+                return Err("No completed tasks to reopen".to_string());
+            }
+
+            let picker = TaskPicker::new(completed_tasks);
+            match picker.run().map_err(|e| e.to_string())? {
+                PickerResult::Selected(t) => t,
+                PickerResult::CreateNew(_) => {
+                    return Err("Cannot create new task in reopen. Use start command.".to_string());
+                }
+                PickerResult::Cancelled => {
+                    println!("Cancelled.");
+                    return Ok(());
+                }
+            }
+        } else {
+            return Err("Task name required in non-interactive mode".to_string());
+        }
+    } else if is_interactive() && !no_prompt {
+        let completed_tasks = task_service
+            .search_completed("")
+            .map_err(|e| e.to_string())?;
+
+        if completed_tasks.is_empty() {
+            return Err("No completed tasks to reopen".to_string());
+        }
+
+        let picker = TaskPicker::new(completed_tasks);
+        match picker.run().map_err(|e| e.to_string())? {
+            PickerResult::Selected(t) => t,
+            PickerResult::CreateNew(_) => {
+                return Err("Cannot create new task in reopen. Use start command.".to_string());
+            }
+            PickerResult::Cancelled => {
+                println!("Cancelled.");
+                return Ok(());
+            }
+        }
+    } else {
+        return Err("Task name required in non-interactive mode".to_string());
+    };
+
+    task_service
+        .set_status(task.id, wdttg::TaskStatus::Active)
+        .map_err(|e| e.to_string())?;
+
+    println!("Reopened: {}", task.name);
+
+    Ok(())
+}
+
+fn handle_archive(query: Option<&str>, no_prompt: bool, db: &Arc<Database>) -> Result<(), String> {
+    let task_service = TaskService::new(Arc::clone(db));
+
+    let task = if let Some(query_str) = query {
+        if !query_str.is_empty() {
+            task_service
+                .get_by_name(query_str)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("Task not found: {}", query_str))?
+        } else if is_interactive() && !no_prompt {
+            let non_archived = task_service
+                .get_non_archived_tasks()
+                .map_err(|e| e.to_string())?;
+
+            if non_archived.is_empty() {
+                return Err("No tasks to archive".to_string());
+            }
+
+            let picker = TaskPicker::new(non_archived);
+            match picker.run().map_err(|e| e.to_string())? {
+                PickerResult::Selected(t) => t,
+                PickerResult::CreateNew(_) => {
+                    return Err("Cannot create new task in archive. Use start command.".to_string());
+                }
+                PickerResult::Cancelled => {
+                    println!("Cancelled.");
+                    return Ok(());
+                }
+            }
+        } else {
+            return Err("Task name required in non-interactive mode".to_string());
+        }
+    } else if is_interactive() && !no_prompt {
+        let non_archived = task_service
+            .get_non_archived_tasks()
+            .map_err(|e| e.to_string())?;
+
+        if non_archived.is_empty() {
+            return Err("No tasks to archive".to_string());
+        }
+
+        let picker = TaskPicker::new(non_archived);
+        match picker.run().map_err(|e| e.to_string())? {
+            PickerResult::Selected(t) => t,
+            PickerResult::CreateNew(_) => {
+                return Err("Cannot create new task in archive. Use start command.".to_string());
+            }
+            PickerResult::Cancelled => {
+                println!("Cancelled.");
+                return Ok(());
+            }
+        }
+    } else {
+        return Err("Task name required in non-interactive mode".to_string());
+    };
+
+    task_service
+        .set_status(task.id, wdttg::TaskStatus::Archived)
+        .map_err(|e| e.to_string())?;
+
+    println!("Archived: {}", task.name);
+
+    Ok(())
+}
+
 fn main() {
     let cli = cli::parse();
 
@@ -188,20 +344,9 @@ fn main() {
         }
         Commands::Stop => handle_stop(&db),
         Commands::Status => handle_status(&db),
-        Commands::Done => {
-            println!("Done: not implemented");
-            Ok(())
-        }
-        Commands::Reopen { query } => {
-            let query_str = query.as_deref().unwrap_or("");
-            println!("Reopen: {} (not implemented)", query_str);
-            Ok(())
-        }
-        Commands::Archive { query } => {
-            let query_str = query.as_deref().unwrap_or("");
-            println!("Archive: {} (not implemented)", query_str);
-            Ok(())
-        }
+        Commands::Done => handle_done(&db),
+        Commands::Reopen { query } => handle_reopen(query.as_deref(), cli.no_prompt, &db),
+        Commands::Archive { query } => handle_archive(query.as_deref(), cli.no_prompt, &db),
         Commands::Edit {
             query,
             name,
