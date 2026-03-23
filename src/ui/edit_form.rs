@@ -1,0 +1,417 @@
+use crate::models::{EmQuadrant, Task, TaskStatus};
+use crossterm::{
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::{
+    backend::CrosstermBackend,
+    layout::{Constraint, Direction, Layout, Rect},
+    style::{Color, Modifier, Style},
+    text::{Line, Span},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    Frame, Terminal,
+};
+use std::io;
+use thiserror::Error;
+
+#[derive(Debug, Error)]
+pub enum EditFormError {
+    #[error("IO error: {0}")]
+    Io(#[from] io::Error),
+    #[error("Terminal error: {0}")]
+    Terminal(String),
+}
+
+pub type Result<T> = std::result::Result<T, EditFormError>;
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum EditFormResult {
+    Saved(Task),
+    Cancelled,
+}
+
+#[derive(Debug, Clone)]
+pub struct EditableTask {
+    pub id: i64,
+    pub name: String,
+    pub notes: String,
+    pub em_quadrant: EmQuadrant,
+    pub status: TaskStatus,
+    pub recurring: bool,
+}
+
+impl From<Task> for EditableTask {
+    fn from(task: Task) -> Self {
+        Self {
+            id: task.id,
+            name: task.name.clone(),
+            notes: task.notes.clone().unwrap_or_default(),
+            em_quadrant: task.em_quadrant(),
+            status: task.status,
+            recurring: task.recurring,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Field {
+    Name,
+    Notes,
+    EmQuadrant,
+    Status,
+    Recurring,
+}
+
+const FIELDS: [Field; 5] = [
+    Field::Name,
+    Field::Notes,
+    Field::EmQuadrant,
+    Field::Status,
+    Field::Recurring,
+];
+
+const EM_OPTIONS: [(EmQuadrant, &str); 4] = [
+    (EmQuadrant::DoFirst, "Do First"),
+    (EmQuadrant::Schedule, "Schedule"),
+    (EmQuadrant::Delegate, "Delegate"),
+    (EmQuadrant::Eliminate, "Eliminate"),
+];
+
+const STATUS_OPTIONS: [(TaskStatus, &str); 3] = [
+    (TaskStatus::Active, "active"),
+    (TaskStatus::Completed, "completed"),
+    (TaskStatus::Archived, "archived"),
+];
+
+pub struct EditForm {
+    task: EditableTask,
+    current_field: Field,
+    editing_text: bool,
+    text_buffer: String,
+    em_index: usize,
+    status_index: usize,
+}
+
+impl EditForm {
+    pub fn new(task: Task) -> Self {
+        let editable: EditableTask = task.into();
+        let em_index = EM_OPTIONS
+            .iter()
+            .position(|(q, _)| *q == editable.em_quadrant)
+            .unwrap_or(0);
+        let status_index = STATUS_OPTIONS
+            .iter()
+            .position(|(s, _)| *s == editable.status)
+            .unwrap_or(0);
+
+        Self {
+            task: editable,
+            current_field: Field::Name,
+            editing_text: false,
+            text_buffer: String::new(),
+            em_index,
+            status_index,
+        }
+    }
+
+    pub fn run(mut self) -> Result<EditFormResult> {
+        enable_raw_mode().map_err(|e| EditFormError::Terminal(e.to_string()))?;
+        let mut stdout = io::stdout();
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)
+            .map_err(|e| EditFormError::Terminal(e.to_string()))?;
+
+        let backend = CrosstermBackend::new(stdout);
+        let mut terminal =
+            Terminal::new(backend).map_err(|e| EditFormError::Terminal(e.to_string()))?;
+
+        let result = self.run_loop(&mut terminal);
+
+        disable_raw_mode().map_err(|e| EditFormError::Terminal(e.to_string()))?;
+        execute!(
+            terminal.backend_mut(),
+            LeaveAlternateScreen,
+            DisableMouseCapture
+        )
+        .map_err(|e| EditFormError::Terminal(e.to_string()))?;
+
+        result
+    }
+
+    fn run_loop(
+        &mut self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    ) -> Result<EditFormResult> {
+        loop {
+            terminal
+                .draw(|f| self.render(f))
+                .map_err(|e| EditFormError::Terminal(e.to_string()))?;
+
+            if let Event::Key(key) =
+                event::read().map_err(|e| EditFormError::Terminal(e.to_string()))?
+            {
+                if self.editing_text {
+                    match key.code {
+                        KeyCode::Esc => {
+                            self.editing_text = false;
+                        }
+                        KeyCode::Enter => {
+                            self.apply_text_edit();
+                            self.editing_text = false;
+                        }
+                        KeyCode::Char(c) => {
+                            self.text_buffer.push(c);
+                        }
+                        KeyCode::Backspace => {
+                            self.text_buffer.pop();
+                        }
+                        _ => {}
+                    }
+                } else {
+                    match key.code {
+                        KeyCode::Esc => {
+                            return Ok(EditFormResult::Cancelled);
+                        }
+                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            return Ok(EditFormResult::Cancelled);
+                        }
+                        KeyCode::Enter => {
+                            return Ok(EditFormResult::Saved(Task {
+                                id: self.task.id,
+                                name: self.task.name.clone(),
+                                notes: if self.task.notes.is_empty() {
+                                    None
+                                } else {
+                                    Some(self.task.notes.clone())
+                                },
+                                em_urgent: self.task.em_quadrant.is_urgent(),
+                                em_important: self.task.em_quadrant.is_important(),
+                                status: self.task.status,
+                                recurring: self.task.recurring,
+                                tags: vec![],
+                                created_at: chrono::Utc::now(),
+                                updated_at: chrono::Utc::now(),
+                            }));
+                        }
+                        KeyCode::Up => {
+                            self.move_field(-1);
+                        }
+                        KeyCode::Down => {
+                            self.move_field(1);
+                        }
+                        KeyCode::Char(' ') | KeyCode::Right => {
+                            self.edit_current_field();
+                        }
+                        KeyCode::Left => {
+                            self.adjust_field(-1);
+                        }
+                        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                            return Ok(EditFormResult::Saved(Task {
+                                id: self.task.id,
+                                name: self.task.name.clone(),
+                                notes: if self.task.notes.is_empty() {
+                                    None
+                                } else {
+                                    Some(self.task.notes.clone())
+                                },
+                                em_urgent: self.task.em_quadrant.is_urgent(),
+                                em_important: self.task.em_quadrant.is_important(),
+                                status: self.task.status,
+                                recurring: self.task.recurring,
+                                tags: vec![],
+                                created_at: chrono::Utc::now(),
+                                updated_at: chrono::Utc::now(),
+                            }));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+    }
+
+    fn move_field(&mut self, delta: i32) {
+        let current_idx = FIELDS
+            .iter()
+            .position(|f| *f == self.current_field)
+            .unwrap_or(0);
+        let new_idx = ((current_idx as i32 + delta).clamp(0, (FIELDS.len() - 1) as i32)) as usize;
+        self.current_field = FIELDS[new_idx];
+    }
+
+    fn edit_current_field(&mut self) {
+        match self.current_field {
+            Field::Name => {
+                self.text_buffer = self.task.name.clone();
+                self.editing_text = true;
+            }
+            Field::Notes => {
+                self.text_buffer = self.task.notes.clone();
+                self.editing_text = true;
+            }
+            Field::EmQuadrant => {
+                self.em_index = (self.em_index + 1) % EM_OPTIONS.len();
+                self.task.em_quadrant = EM_OPTIONS[self.em_index].0;
+            }
+            Field::Status => {
+                self.status_index = (self.status_index + 1) % STATUS_OPTIONS.len();
+                self.task.status = STATUS_OPTIONS[self.status_index].0;
+            }
+            Field::Recurring => {
+                self.task.recurring = !self.task.recurring;
+            }
+        }
+    }
+
+    fn adjust_field(&mut self, delta: i32) {
+        match self.current_field {
+            Field::EmQuadrant => {
+                let new_idx =
+                    ((self.em_index as i32 + delta).rem_euclid(EM_OPTIONS.len() as i32)) as usize;
+                self.em_index = new_idx;
+                self.task.em_quadrant = EM_OPTIONS[self.em_index].0;
+            }
+            Field::Status => {
+                let new_idx = ((self.status_index as i32 + delta)
+                    .rem_euclid(STATUS_OPTIONS.len() as i32))
+                    as usize;
+                self.status_index = new_idx;
+                self.task.status = STATUS_OPTIONS[self.status_index].0;
+            }
+            _ => {}
+        }
+    }
+
+    fn apply_text_edit(&mut self) {
+        match self.current_field {
+            Field::Name => {
+                self.task.name = self.text_buffer.clone();
+            }
+            Field::Notes => {
+                self.task.notes = self.text_buffer.clone();
+            }
+            _ => {}
+        }
+    }
+
+    fn render(&self, f: &mut Frame) {
+        let chunks = Layout::default()
+            .direction(Direction::Vertical)
+            .margin(2)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Length(12),
+                Constraint::Length(3),
+            ])
+            .split(f.size());
+
+        self.render_title(f, chunks[0]);
+        self.render_fields(f, chunks[1]);
+        self.render_help(f, chunks[2]);
+    }
+
+    fn render_title(&self, f: &mut Frame, area: Rect) {
+        let title = Paragraph::new(Line::from(vec![Span::styled(
+            format!("Editing: {}", self.task.name),
+            Style::default().fg(Color::Yellow),
+        )]))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Edit Task ")
+                .title_style(Style::default().fg(Color::Cyan)),
+        );
+
+        f.render_widget(title, area);
+    }
+
+    fn render_fields(&self, f: &mut Frame, area: Rect) {
+        let items: Vec<ListItem> = FIELDS
+            .iter()
+            .map(|field| {
+                let (label, value) = self.get_field_display(field);
+                let is_selected = *field == self.current_field && !self.editing_text;
+                let is_editing = *field == self.current_field && self.editing_text;
+
+                let prefix = if is_selected {
+                    "▶ "
+                } else if is_editing {
+                    "✎ "
+                } else {
+                    "  "
+                };
+
+                let display_value = if is_editing {
+                    format!("{}_", self.text_buffer)
+                } else {
+                    value
+                };
+
+                let style = if is_selected || is_editing {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(Color::White)
+                };
+
+                ListItem::new(Line::from(vec![
+                    Span::styled(prefix, Style::default().fg(Color::Cyan)),
+                    Span::styled(format!("{:<10}: ", label), Style::default().fg(Color::Gray)),
+                    Span::styled(display_value, style),
+                ]))
+            })
+            .collect();
+
+        let list = List::new(items).block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Fields ")
+                .title_style(Style::default().fg(Color::Cyan)),
+        );
+
+        let mut state = ListState::default();
+        state.select(Some(0));
+        f.render_stateful_widget(list, area, &mut state);
+    }
+
+    fn get_field_display(&self, field: &Field) -> (String, String) {
+        match field {
+            Field::Name => ("Name".to_string(), self.task.name.clone()),
+            Field::Notes => ("Notes".to_string(), self.task.notes.clone()),
+            Field::EmQuadrant => (
+                "EM".to_string(),
+                format!(
+                    "{} - {}",
+                    self.task.em_quadrant.tag(),
+                    self.task.em_quadrant.description()
+                ),
+            ),
+            Field::Status => ("Status".to_string(), self.task.status.to_string()),
+            Field::Recurring => (
+                "Recurring".to_string(),
+                if self.task.recurring { "Yes" } else { "No" }.to_string(),
+            ),
+        }
+    }
+
+    fn render_help(&self, f: &mut Frame, area: Rect) {
+        let help_text = if self.editing_text {
+            "Enter: confirm | Esc: cancel | type to edit"
+        } else {
+            "↑↓: navigate | Space/Enter/→: edit | ←: prev option | Ctrl+S: save | Esc: cancel"
+        };
+
+        let help = Paragraph::new(Line::from(vec![Span::styled(
+            help_text,
+            Style::default().fg(Color::DarkGray),
+        )]))
+        .block(Block::default().borders(Borders::ALL));
+
+        f.render_widget(help, area);
+    }
+}
+
+pub fn edit_task(task: Task) -> Result<EditFormResult> {
+    EditForm::new(task).run()
+}

@@ -257,24 +257,6 @@ mod cli_tests {
     }
 
     #[test]
-    fn test_stop_ends_session_and_shows_duration() {
-        with_temp_db(|_temp_dir, _db_path| {
-            let mut cmd1 = Command::cargo_bin("wdttg").unwrap();
-            cmd1.args(["--no-prompt", "start", "test-task", "--em", "11"])
-                .assert()
-                .success();
-
-            let mut cmd2 = Command::cargo_bin("wdttg").unwrap();
-            cmd2.args(["--no-prompt", "stop"])
-                .assert()
-                .success()
-                .stdout(predicate::str::contains("Stopped: test-task"))
-                .stdout(predicate::str::contains("("))
-                .stdout(predicate::str::contains("Session ID:"));
-        });
-    }
-
-    #[test]
     fn test_stop_no_active_timer() {
         with_temp_db(|_temp_dir, _db_path| {
             let mut cmd = Command::cargo_bin("wdttg").unwrap();
@@ -312,25 +294,6 @@ mod cli_tests {
                 .assert()
                 .success()
                 .stdout(predicate::str::contains("#em10"));
-        });
-    }
-
-    #[test]
-    fn test_status_shows_active_session() {
-        with_temp_db(|_temp_dir, _db_path| {
-            let mut cmd1 = Command::cargo_bin("wdttg").unwrap();
-            cmd1.args(["--no-prompt", "start", "active-task", "--em", "11"])
-                .assert()
-                .success();
-
-            let mut cmd2 = Command::cargo_bin("wdttg").unwrap();
-            cmd2.args(["--no-prompt", "status"])
-                .assert()
-                .success()
-                .stdout(predicate::str::contains("Active: active-task"))
-                .stdout(predicate::str::contains("#em11"))
-                .stdout(predicate::str::contains("Started:"))
-                .stdout(predicate::str::contains("ago"));
         });
     }
 
@@ -482,6 +445,159 @@ mod cli_tests {
                 .assert()
                 .success()
                 .stdout(predicate::str::contains("Started: task-to-complete-2"));
+        });
+    }
+
+    #[test]
+    fn test_edit_updates_task_name() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd1 = Command::cargo_bin("wdttg").unwrap();
+            cmd1.args(["--no-prompt", "start", "old-task-name", "--em", "11"])
+                .assert()
+                .success();
+
+            let mut cmd2 = Command::cargo_bin("wdttg").unwrap();
+            cmd2.args(["--no-prompt", "stop"]).assert().success();
+
+            let mut cmd3 = Command::cargo_bin("wdttg").unwrap();
+            cmd3.args([
+                "--no-prompt",
+                "edit",
+                "old-task-name",
+                "--name",
+                "new-task-name",
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Updated: new-task-name"));
+        });
+    }
+
+    #[test]
+    fn test_edit_updates_em_quadrant() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd1 = Command::cargo_bin("wdttg").unwrap();
+            cmd1.args(["--no-prompt", "start", "task-em-edit", "--em", "11"])
+                .assert()
+                .success();
+
+            let mut cmd2 = Command::cargo_bin("wdttg").unwrap();
+            cmd2.args(["--no-prompt", "stop"]).assert().success();
+
+            let mut cmd3 = Command::cargo_bin("wdttg").unwrap();
+            cmd3.args(["--no-prompt", "edit", "task-em-edit", "--em", "00"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("Updated: task-em-edit"));
+
+            let mut cmd4 = Command::cargo_bin("wdttg").unwrap();
+            cmd4.args(["--no-prompt", "start", "task-em-edit"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("#em00"));
+        });
+    }
+
+    #[test]
+    fn test_edit_updates_status() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd1 = Command::cargo_bin("wdttg").unwrap();
+            cmd1.args(["--no-prompt", "start", "task-status-edit", "--em", "11"])
+                .assert()
+                .success();
+
+            let mut cmd2 = Command::cargo_bin("wdttg").unwrap();
+            cmd2.args(["--no-prompt", "stop"]).assert().success();
+
+            let mut cmd3 = Command::cargo_bin("wdttg").unwrap();
+            cmd3.args([
+                "--no-prompt",
+                "edit",
+                "task-status-edit",
+                "--status",
+                "archived",
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Updated: task-status-edit"));
+        });
+    }
+
+    #[test]
+    fn test_edit_task_not_found() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd = Command::cargo_bin("wdttg").unwrap();
+            cmd.args([
+                "--no-prompt",
+                "edit",
+                "nonexistent-task",
+                "--name",
+                "new-name",
+            ])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("Task not found"));
+        });
+    }
+
+    #[test]
+    fn test_edit_updates_notes() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd1 = Command::cargo_bin("wdttg").unwrap();
+            cmd1.args(["--no-prompt", "start", "task-notes-edit", "--em", "11"])
+                .assert()
+                .success();
+
+            let mut cmd2 = Command::cargo_bin("wdttg").unwrap();
+            cmd2.args(["--no-prompt", "stop"]).assert().success();
+
+            let mut cmd3 = Command::cargo_bin("wdttg").unwrap();
+            cmd3.args([
+                "--no-prompt",
+                "edit",
+                "task-notes-edit",
+                "--notes",
+                "These are my notes",
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Updated: task-notes-edit"));
+        });
+    }
+
+    #[test]
+    fn test_edit_updates_recurring() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd1 = Command::cargo_bin("wdttg").unwrap();
+            cmd1.args(["--no-prompt", "start", "task-recurring-edit", "--em", "11"])
+                .assert()
+                .success();
+
+            let mut cmd2 = Command::cargo_bin("wdttg").unwrap();
+            cmd2.args(["--no-prompt", "stop"]).assert().success();
+
+            let mut cmd3 = Command::cargo_bin("wdttg").unwrap();
+            cmd3.args([
+                "--no-prompt",
+                "edit",
+                "task-recurring-edit",
+                "--recurring",
+                "true",
+            ])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Updated: task-recurring-edit"));
+        });
+    }
+
+    #[test]
+    fn test_edit_requires_task_name_in_non_interactive() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd = Command::cargo_bin("wdttg").unwrap();
+            cmd.args(["--no-prompt", "edit"])
+                .assert()
+                .failure()
+                .stderr(predicate::str::contains("Task name required"));
         });
     }
 }

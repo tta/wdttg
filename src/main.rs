@@ -1,7 +1,9 @@
 use std::io::IsTerminal;
 use std::sync::Arc;
-use wdttg::ui::{select_em_quadrant, EmSelectorResult, PickerResult, TaskPicker};
-use wdttg::{cli, Commands, Database, EmQuadrant, SessionService, TaskService};
+use wdttg::ui::{
+    edit_task, select_em_quadrant, EditFormResult, EmSelectorResult, PickerResult, TaskPicker,
+};
+use wdttg::{cli, Commands, Database, EmQuadrant, SessionService, TaskService, TaskStatus};
 
 fn format_duration(duration: chrono::Duration) -> String {
     let total_minutes = duration.num_minutes();
@@ -39,21 +41,33 @@ fn handle_start(
     let task_service = TaskService::new(Arc::clone(db));
     let session_service = SessionService::new(Arc::clone(db));
 
-    let task = if let Some(query_str) = query {
+    let (task, is_new_task) = if let Some(query_str) = query {
         if !query_str.is_empty() {
-            task_service
-                .get_or_create(query_str)
+            match task_service
+                .get_by_name(query_str)
                 .map_err(|e| e.to_string())?
+            {
+                Some(existing) => (existing, false),
+                None => {
+                    let created = task_service
+                        .get_or_create(query_str)
+                        .map_err(|e| e.to_string())?;
+                    (created, true)
+                }
+            }
         } else if is_interactive() && !no_prompt {
             let tasks = task_service
                 .get_pickable_tasks()
                 .map_err(|e| e.to_string())?;
             let picker = TaskPicker::new(tasks);
             match picker.run().map_err(|e| e.to_string())? {
-                PickerResult::Selected(t) => t,
-                PickerResult::CreateNew(name) => task_service
-                    .get_or_create(&name)
-                    .map_err(|e| e.to_string())?,
+                PickerResult::Selected(t) => (t, false),
+                PickerResult::CreateNew(name) => {
+                    let created = task_service
+                        .get_or_create(&name)
+                        .map_err(|e| e.to_string())?;
+                    (created, true)
+                }
                 PickerResult::Cancelled => {
                     println!("Cancelled.");
                     return Ok(());
@@ -68,10 +82,13 @@ fn handle_start(
             .map_err(|e| e.to_string())?;
         let picker = TaskPicker::new(tasks);
         match picker.run().map_err(|e| e.to_string())? {
-            PickerResult::Selected(t) => t,
-            PickerResult::CreateNew(name) => task_service
-                .get_or_create(&name)
-                .map_err(|e| e.to_string())?,
+            PickerResult::Selected(t) => (t, false),
+            PickerResult::CreateNew(name) => {
+                let created = task_service
+                    .get_or_create(&name)
+                    .map_err(|e| e.to_string())?;
+                (created, true)
+            }
             PickerResult::Cancelled => {
                 println!("Cancelled.");
                 return Ok(());
@@ -80,8 +97,6 @@ fn handle_start(
     } else {
         return Err("Task name required in non-interactive mode".to_string());
     };
-
-    let is_new_task = !task.em_urgent && !task.em_important;
 
     if is_new_task {
         let quadrant = if let Some(em_str) = em_arg {
@@ -327,6 +342,141 @@ fn handle_archive(query: Option<&str>, no_prompt: bool, db: &Arc<Database>) -> R
     Ok(())
 }
 
+fn handle_edit(
+    query: Option<&str>,
+    name: Option<&str>,
+    notes: Option<&str>,
+    em: Option<&str>,
+    status: Option<&str>,
+    recurring: Option<bool>,
+    no_prompt: bool,
+    db: &Arc<Database>,
+) -> Result<(), String> {
+    let task_service = TaskService::new(Arc::clone(db));
+
+    if no_prompt || !is_interactive() {
+        if let Some(query_str) = query {
+            if !query_str.is_empty() {
+                let task = task_service
+                    .get_by_name(query_str)
+                    .map_err(|e| e.to_string())?
+                    .ok_or_else(|| format!("Task not found: {}", query_str))?;
+
+                let mut updated_task = task.clone();
+
+                if let Some(new_name) = name {
+                    updated_task.name = new_name.to_string();
+                }
+
+                if let Some(new_notes) = notes {
+                    updated_task.notes = if new_notes.is_empty() {
+                        None
+                    } else {
+                        Some(new_notes.to_string())
+                    };
+                }
+
+                if let Some(em_str) = em {
+                    let quadrant = parse_em_arg(em_str)?;
+                    updated_task.em_urgent = quadrant.is_urgent();
+                    updated_task.em_important = quadrant.is_important();
+                }
+
+                if let Some(status_str) = status {
+                    updated_task.status =
+                        TaskStatus::from_str(status_str).map_err(|e| e.to_string())?;
+                }
+
+                if let Some(recur) = recurring {
+                    updated_task.recurring = recur;
+                }
+
+                task_service
+                    .update(&updated_task)
+                    .map_err(|e| e.to_string())?;
+
+                println!("Updated: {}", updated_task.name);
+                return Ok(());
+            }
+        }
+        return Err("Task name required in non-interactive mode".to_string());
+    }
+
+    let task = if let Some(query_str) = query {
+        if !query_str.is_empty() {
+            task_service
+                .get_by_name(query_str)
+                .map_err(|e| e.to_string())?
+                .ok_or_else(|| format!("Task not found: {}", query_str))?
+        } else {
+            let non_archived = task_service
+                .get_non_archived_tasks()
+                .map_err(|e| e.to_string())?;
+
+            if non_archived.is_empty() {
+                return Err("No tasks to edit".to_string());
+            }
+
+            let picker = TaskPicker::new(non_archived);
+            match picker.run().map_err(|e| e.to_string())? {
+                PickerResult::Selected(t) => t,
+                PickerResult::CreateNew(_) => {
+                    return Err("Cannot create new task in edit. Use start command.".to_string());
+                }
+                PickerResult::Cancelled => {
+                    println!("Cancelled.");
+                    return Ok(());
+                }
+            }
+        }
+    } else {
+        let non_archived = task_service
+            .get_non_archived_tasks()
+            .map_err(|e| e.to_string())?;
+
+        if non_archived.is_empty() {
+            return Err("No tasks to edit".to_string());
+        }
+
+        let picker = TaskPicker::new(non_archived);
+        match picker.run().map_err(|e| e.to_string())? {
+            PickerResult::Selected(t) => t,
+            PickerResult::CreateNew(_) => {
+                return Err("Cannot create new task in edit. Use start command.".to_string());
+            }
+            PickerResult::Cancelled => {
+                println!("Cancelled.");
+                return Ok(());
+            }
+        }
+    };
+
+    let result = edit_task(task.clone()).map_err(|e| e.to_string())?;
+
+    match result {
+        EditFormResult::Saved(updated_task) => {
+            let mut final_task = task.clone();
+            final_task.name = updated_task.name;
+            final_task.notes = updated_task.notes;
+            final_task.em_urgent = updated_task.em_urgent;
+            final_task.em_important = updated_task.em_important;
+            final_task.status = updated_task.status;
+            final_task.recurring = updated_task.recurring;
+
+            task_service
+                .update(&final_task)
+                .map_err(|e| e.to_string())?;
+
+            println!("Updated: {}", final_task.name);
+        }
+        EditFormResult::Cancelled => {
+            println!("Cancelled.");
+        }
+    }
+
+    Ok(())
+}
+
 fn main() {
     let cli = cli::parse();
 
@@ -354,22 +504,16 @@ fn main() {
             em,
             status,
             recurring,
-        } => {
-            let query_str = query.as_deref().unwrap_or("");
-            println!("Edit: {} (not implemented)", query_str);
-            if name.is_some()
-                || notes.is_some()
-                || em.is_some()
-                || status.is_some()
-                || recurring.is_some()
-            {
-                println!(
-                    "  Fields: name={:?}, notes={:?}, em={:?}, status={:?}, recurring={:?}",
-                    name, notes, em, status, recurring
-                );
-            }
-            Ok(())
-        }
+        } => handle_edit(
+            query.as_deref(),
+            name.as_deref(),
+            notes.as_deref(),
+            em.as_deref(),
+            status.as_deref(),
+            recurring,
+            cli.no_prompt,
+            &db,
+        ),
         Commands::Log { task, start, end } => {
             println!("Log: not implemented");
             if task.is_some() || start.is_some() || end.is_some() {
