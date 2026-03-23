@@ -114,6 +114,34 @@ fn handle_start(
     Ok(())
 }
 
+fn handle_status(db: &Arc<Database>) -> Result<(), String> {
+    let session_service = SessionService::new(Arc::clone(db));
+
+    let active = session_service.get_active().map_err(|e| e.to_string())?;
+
+    match active {
+        Some(session_with_task) => {
+            let task = &session_with_task.task;
+            let session = &session_with_task.session;
+
+            let em_tag = task.em_quadrant().tag();
+            let start_time = session.start_time.format("%H:%M");
+
+            let now = chrono::Utc::now();
+            let duration = now - session.start_time;
+            let duration_str = format_duration(duration);
+
+            println!("Active: {} {}", task.name, em_tag);
+            println!("Started: {} ({} ago)", start_time, duration_str);
+        }
+        None => {
+            println!("No active timer");
+        }
+    }
+
+    Ok(())
+}
+
 fn handle_stop(db: &Arc<Database>) -> Result<(), String> {
     let session_service = SessionService::new(Arc::clone(db));
 
@@ -159,10 +187,7 @@ fn main() {
             handle_start(query.as_deref(), em.as_deref(), cli.no_prompt, &db)
         }
         Commands::Stop => handle_stop(&db),
-        Commands::Status => {
-            println!("Status: not implemented");
-            Ok(())
-        }
+        Commands::Status => handle_status(&db),
         Commands::Done => {
             println!("Done: not implemented");
             Ok(())

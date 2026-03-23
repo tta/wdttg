@@ -314,4 +314,53 @@ mod cli_tests {
                 .stdout(predicate::str::contains("#em10"));
         });
     }
+
+    #[test]
+    fn test_status_shows_active_session() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd1 = Command::cargo_bin("wdttg").unwrap();
+            cmd1.args(["--no-prompt", "start", "active-task", "--em", "11"])
+                .assert()
+                .success();
+
+            let mut cmd2 = Command::cargo_bin("wdttg").unwrap();
+            cmd2.args(["--no-prompt", "status"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("Active: active-task"))
+                .stdout(predicate::str::contains("#em11"))
+                .stdout(predicate::str::contains("Started:"))
+                .stdout(predicate::str::contains("ago"));
+        });
+    }
+
+    #[test]
+    fn test_status_no_active_timer() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd = Command::cargo_bin("wdttg").unwrap();
+            cmd.args(["--no-prompt", "status"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("No active timer"));
+        });
+    }
+
+    #[test]
+    fn test_status_shows_no_timer_after_stop() {
+        with_temp_db(|_temp_dir, _db_path| {
+            let mut cmd1 = Command::cargo_bin("wdttg").unwrap();
+            cmd1.args(["--no-prompt", "start", "stopped-task", "--em", "01"])
+                .assert()
+                .success();
+
+            let mut cmd2 = Command::cargo_bin("wdttg").unwrap();
+            cmd2.args(["--no-prompt", "stop"]).assert().success();
+
+            let mut cmd3 = Command::cargo_bin("wdttg").unwrap();
+            cmd3.args(["--no-prompt", "status"])
+                .assert()
+                .success()
+                .stdout(predicate::str::contains("No active timer"));
+        });
+    }
 }
