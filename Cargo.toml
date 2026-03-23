@@ -9,6 +9,9 @@ rusqlite = { version = "0.39", features = ["backup"] }
 chrono = { version = "0.4", features = ["serde"] }
 thiserror = "1"
 dirs = "5"
+ratatui = "0.27"
+crossterm = "0.28"
+fuzzy-matcher = "0.3"
 
 [dev-dependencies]
 tempfile = "3"

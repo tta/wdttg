@@ -124,7 +124,7 @@ impl FromStr for EmQuadrant {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct Task {
     pub id: i64,
     pub name: String,
