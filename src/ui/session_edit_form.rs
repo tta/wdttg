@@ -78,6 +78,7 @@ pub struct SessionEditForm {
     text_buffer: String,
     error_message: Option<String>,
     pending_cancel: bool,
+    pending_delete: bool,
 }
 
 impl SessionEditForm {
@@ -93,6 +94,7 @@ impl SessionEditForm {
             text_buffer: String::new(),
             error_message: None,
             pending_cancel: false,
+            pending_delete: false,
         }
     }
 
@@ -147,6 +149,16 @@ impl SessionEditForm {
                         }
                         _ => {}
                     }
+                } else if self.pending_delete {
+                    match (key.modifiers, key.code) {
+                        (_, KeyCode::Char('y') | KeyCode::Char('Y')) => {
+                            return Ok(SessionEditResult::Deleted(self.session.id));
+                        }
+                        (_, KeyCode::Char('n') | KeyCode::Char('N')) | (_, KeyCode::Esc) => {
+                            self.pending_delete = false;
+                        }
+                        _ => {}
+                    }
                 } else if self.editing_text {
                     match (key.modifiers, key.code) {
                         (_, KeyCode::Esc) => {
@@ -182,8 +194,8 @@ impl SessionEditForm {
                         (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                             return Ok(SessionEditResult::Cancelled);
                         }
-                        (KeyModifiers::CONTROL, KeyCode::Char('d')) => {
-                            return Ok(SessionEditResult::Deleted(self.session.id));
+                        (_, KeyCode::Char('d')) => {
+                            self.pending_delete = true;
                         }
                         (_, KeyCode::Char('j')) => {
                             self.move_field(1);
@@ -330,11 +342,14 @@ impl SessionEditForm {
         self.render_help(f, chunks[2]);
 
         if self.pending_cancel {
-            self.render_confirm_dialog(f);
+            self.render_cancel_dialog(f);
+        }
+        if self.pending_delete {
+            self.render_delete_dialog(f);
         }
     }
 
-    fn render_confirm_dialog(&self, f: &mut Frame) {
+    fn render_cancel_dialog(&self, f: &mut Frame) {
         let dialog = Paragraph::new(Line::from(vec![Span::styled(
             "Discard unsaved changes? (y/n)",
             Style::default().fg(Color::Yellow),
@@ -343,6 +358,29 @@ impl SessionEditForm {
             Block::default()
                 .borders(Borders::ALL)
                 .title(" Confirm ")
+                .title_style(Style::default().fg(Color::Red))
+                .style(Style::default().bg(Color::Black)),
+        );
+
+        let area = ratatui::layout::Rect {
+            x: (f.size().width.saturating_sub(40)) / 2,
+            y: (f.size().height.saturating_sub(3)) / 2,
+            width: 40.min(f.size().width),
+            height: 3,
+        };
+
+        f.render_widget(dialog, area);
+    }
+
+    fn render_delete_dialog(&self, f: &mut Frame) {
+        let dialog = Paragraph::new(Line::from(vec![Span::styled(
+            "Delete this session? (y/n)",
+            Style::default().fg(Color::Red),
+        )]))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Delete Session ")
                 .title_style(Style::default().fg(Color::Red))
                 .style(Style::default().bg(Color::Black)),
         );
@@ -463,7 +501,7 @@ impl SessionEditForm {
         let help_text = if self.editing_text {
             "Enter: confirm | Esc: cancel | Ctrl+W: delete word"
         } else {
-            "↑↓/j/k: navigate | Enter/Space: edit | s: save | Ctrl+D: delete | q/Esc: back"
+            "↑↓/j/k: navigate | Enter/Space: edit | s: save | d: delete | q/Esc: back"
         };
 
         let help = Paragraph::new(Line::from(vec![Span::styled(
