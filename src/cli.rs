@@ -2,7 +2,7 @@ use clap::{Parser, Subcommand};
 
 #[derive(Parser, Debug)]
 #[command(name = "wdttg")]
-#[command(about = "What Did I Do Today, Genius? - A time tracker with EM quadrant support")]
+#[command(about = "Where Did The Time Go - A time tracker with EM quadrant support")]
 #[command(version)]
 pub struct Cli {
     #[command(subcommand)]

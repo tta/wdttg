@@ -98,6 +98,12 @@ impl TaskPicker {
                     (KeyModifiers::CONTROL, KeyCode::Char('c')) | (_, KeyCode::Esc) => {
                         return Ok(PickerResult::Cancelled);
                     }
+                    (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
+                        self.move_selection(1);
+                    }
+                    (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
+                        self.move_selection(-1);
+                    }
                     (_, KeyCode::Enter) => {
                         return Ok(self.select_current());
                     }

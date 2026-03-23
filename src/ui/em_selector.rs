@@ -1,6 +1,6 @@
 use crate::models::EmQuadrant;
 use crossterm::{
-    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -96,21 +96,27 @@ impl EmSelector {
             if let Event::Key(key) =
                 event::read().map_err(|e| EmSelectorError::Terminal(e.to_string()))?
             {
-                match key.code {
-                    KeyCode::Esc => {
+                match (key.modifiers, key.code) {
+                    (_, KeyCode::Esc) => {
                         return Ok(EmSelectorResult::Cancelled);
                     }
-                    KeyCode::Enter => {
-                        return Ok(self.select_current());
-                    }
-                    KeyCode::Up => {
-                        self.move_selection(-1);
-                    }
-                    KeyCode::Down => {
+                    (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
                         self.move_selection(1);
                     }
-                    KeyCode::Char(c) => {
-                        if let Some(result) = self.handle_char(c) {
+                    (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
+                        self.move_selection(-1);
+                    }
+                    (_, KeyCode::Enter) => {
+                        return Ok(self.select_current());
+                    }
+                    (_, KeyCode::Up) => {
+                        self.move_selection(-1);
+                    }
+                    (_, KeyCode::Down) => {
+                        self.move_selection(1);
+                    }
+                    (_, KeyCode::Char(c)) => {
+                        if let Some(result) = self.handle_char(c, key.modifiers) {
                             return Ok(result);
                         }
                     }
@@ -120,18 +126,15 @@ impl EmSelector {
         }
     }
 
-    fn handle_char(&mut self, c: char) -> Option<EmSelectorResult> {
+    fn handle_char(&mut self, c: char, modifiers: KeyModifiers) -> Option<EmSelectorResult> {
+        if modifiers.contains(KeyModifiers::CONTROL) {
+            return None;
+        }
         match c {
             '1' => Some(EmSelectorResult::Selected(EmQuadrant::DoFirst)),
             '2' => Some(EmSelectorResult::Selected(EmQuadrant::Schedule)),
             '3' => Some(EmSelectorResult::Selected(EmQuadrant::Delegate)),
             '4' => Some(EmSelectorResult::Selected(EmQuadrant::Eliminate)),
-            'q' | 'c'
-                if crossterm::event::KeyModifiers::CONTROL
-                    == crossterm::event::KeyModifiers::empty() =>
-            {
-                None
-            }
             _ => None,
         }
     }
@@ -206,7 +209,7 @@ impl EmSelector {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" Options (1-4 or arrows) ")
+                    .title(" Options (1-4, arrows, or Ctrl+J/K) ")
                     .title_style(Style::default().fg(Color::Cyan)),
             )
             .highlight_style(

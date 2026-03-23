@@ -151,61 +151,40 @@ impl EditForm {
                 event::read().map_err(|e| EditFormError::Terminal(e.to_string()))?
             {
                 if self.editing_text {
-                    match key.code {
-                        KeyCode::Esc => {
+                    match (key.modifiers, key.code) {
+                        (_, KeyCode::Esc) => {
                             self.editing_text = false;
                         }
-                        KeyCode::Enter => {
+                        (_, KeyCode::Enter) => {
                             self.apply_text_edit();
                             self.editing_text = false;
                         }
-                        KeyCode::Char(c) => {
+                        (KeyModifiers::CONTROL, KeyCode::Char('w')) => {
+                            self.delete_prev_word();
+                        }
+                        (_, KeyCode::Char(c)) => {
                             self.text_buffer.push(c);
                         }
-                        KeyCode::Backspace => {
+                        (_, KeyCode::Backspace) => {
                             self.text_buffer.pop();
                         }
                         _ => {}
                     }
                 } else {
-                    match key.code {
-                        KeyCode::Esc => {
+                    match (key.modifiers, key.code) {
+                        (_, KeyCode::Esc) => {
                             return Ok(EditFormResult::Cancelled);
                         }
-                        KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                             return Ok(EditFormResult::Cancelled);
                         }
-                        KeyCode::Enter => {
-                            return Ok(EditFormResult::Saved(Task {
-                                id: self.task.id,
-                                name: self.task.name.clone(),
-                                notes: if self.task.notes.is_empty() {
-                                    None
-                                } else {
-                                    Some(self.task.notes.clone())
-                                },
-                                em_urgent: self.task.em_quadrant.is_urgent(),
-                                em_important: self.task.em_quadrant.is_important(),
-                                status: self.task.status,
-                                recurring: self.task.recurring,
-                                tags: vec![],
-                                created_at: chrono::Utc::now(),
-                                updated_at: chrono::Utc::now(),
-                            }));
-                        }
-                        KeyCode::Up => {
-                            self.move_field(-1);
-                        }
-                        KeyCode::Down => {
+                        (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
                             self.move_field(1);
                         }
-                        KeyCode::Char(' ') | KeyCode::Right => {
-                            self.edit_current_field();
+                        (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
+                            self.move_field(-1);
                         }
-                        KeyCode::Left => {
-                            self.adjust_field(-1);
-                        }
-                        KeyCode::Char('s') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        (_, KeyCode::Enter) => {
                             return Ok(EditFormResult::Saved(Task {
                                 id: self.task.id,
                                 name: self.task.name.clone(),
@@ -222,6 +201,18 @@ impl EditForm {
                                 created_at: chrono::Utc::now(),
                                 updated_at: chrono::Utc::now(),
                             }));
+                        }
+                        (_, KeyCode::Up) => {
+                            self.move_field(-1);
+                        }
+                        (_, KeyCode::Down) => {
+                            self.move_field(1);
+                        }
+                        (_, KeyCode::Char(' ')) | (_, KeyCode::Right) => {
+                            self.edit_current_field();
+                        }
+                        (_, KeyCode::Left) => {
+                            self.adjust_field(-1);
                         }
                         _ => {}
                     }
@@ -291,6 +282,15 @@ impl EditForm {
                 self.task.notes = self.text_buffer.clone();
             }
             _ => {}
+        }
+    }
+
+    fn delete_prev_word(&mut self) {
+        let trimmed = self.text_buffer.trim_end_matches(' ');
+        if let Some(pos) = trimmed.rfind(' ') {
+            self.text_buffer.truncate(pos);
+        } else {
+            self.text_buffer.clear();
         }
     }
 
@@ -397,9 +397,9 @@ impl EditForm {
 
     fn render_help(&self, f: &mut Frame, area: Rect) {
         let help_text = if self.editing_text {
-            "Enter: confirm | Esc: cancel | type to edit"
+            "Enter: confirm | Esc: cancel | Ctrl+W: delete word"
         } else {
-            "↑↓: navigate | Space/Enter/→: edit | ←: prev option | Ctrl+S: save | Esc: cancel"
+            "↑↓/Ctrl+J/K: navigate | Space/→: edit field | ←: cycle options | Enter: save | Esc: cancel"
         };
 
         let help = Paragraph::new(Line::from(vec![Span::styled(
