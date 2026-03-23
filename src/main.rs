@@ -1,3 +1,5 @@
+use clap::CommandFactory;
+use clap_complete::{generate, shells::Shell};
 use std::io::IsTerminal;
 use std::sync::Arc;
 use wdttg::ui::{
@@ -922,6 +924,21 @@ fn handle_backup(keep: usize, db: &Arc<Database>) -> Result<(), String> {
     Ok(())
 }
 
+fn handle_completions(shell: &str) -> Result<(), String> {
+    let shell = shell.parse::<Shell>().map_err(|_| {
+        format!(
+            "Unknown shell: {}. Options: bash, zsh, fish, elvish, powershell",
+            shell
+        )
+    })?;
+
+    let mut cmd = cli::Cli::command();
+    let name = cmd.get_name().to_string();
+    generate(shell, &mut cmd, name, &mut std::io::stdout());
+
+    Ok(())
+}
+
 fn main() {
     let cli = cli::parse();
 
@@ -978,6 +995,7 @@ fn main() {
             }
         },
         Commands::Backup { keep } => handle_backup(keep, &db),
+        Commands::Completions { shell } => handle_completions(&shell),
     };
 
     if let Err(e) = result {

@@ -74,6 +74,10 @@ pub enum Commands {
         #[arg(long, default_value = "10")]
         keep: usize,
     },
+
+    Completions {
+        shell: String,
+    },
 }
 
 #[derive(Subcommand, Debug)]
