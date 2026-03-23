@@ -9,7 +9,7 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame, Terminal,
@@ -32,6 +32,7 @@ pub type Result<T> = std::result::Result<T, TimelineError>;
 pub enum TimelineResult {
     Closed,
     Cancelled,
+    EditSession(i64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,15 +87,31 @@ pub struct TimelineView {
     date: NaiveDate,
     zoom: ZoomLevel,
     terminal_width: u16,
+    selected_index: usize,
+    session_blocks: Vec<(usize, i64)>,
 }
 
 impl TimelineView {
     pub fn new(blocks: Vec<TimeBlock>, date: NaiveDate) -> Self {
+        let session_blocks: Vec<(usize, i64)> = blocks
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, b)| {
+                if !b.is_gap() {
+                    b.session_id.map(|id| (idx, id))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
         Self {
             blocks,
             date,
             zoom: ZoomLevel::All,
             terminal_width: 80,
+            selected_index: 0,
+            session_blocks,
         }
     }
 
@@ -144,6 +161,17 @@ impl TimelineView {
                         | (_, KeyCode::Char('q') | KeyCode::Char('Q')) => {
                             return Ok(TimelineResult::Cancelled);
                         }
+                        (_, KeyCode::Char('e') | KeyCode::Char('E')) => {
+                            if let Some((_, session_id)) = self.get_selected_session() {
+                                return Ok(TimelineResult::EditSession(session_id));
+                            }
+                        }
+                        (_, KeyCode::Up) | (_, KeyCode::Char('k')) => {
+                            self.select_prev_session();
+                        }
+                        (_, KeyCode::Down) | (_, KeyCode::Char('j')) => {
+                            self.select_next_session();
+                        }
                         (_, KeyCode::Char(c)) => {
                             if let Some(zoom) = ZoomLevel::from_key(c) {
                                 self.zoom = zoom;
@@ -153,6 +181,22 @@ impl TimelineView {
                     }
                 }
             }
+        }
+    }
+
+    fn get_selected_session(&self) -> Option<(usize, i64)> {
+        self.session_blocks.get(self.selected_index).copied()
+    }
+
+    fn select_prev_session(&mut self) {
+        if self.selected_index > 0 {
+            self.selected_index -= 1;
+        }
+    }
+
+    fn select_next_session(&mut self) {
+        if self.selected_index + 1 < self.session_blocks.len() {
+            self.selected_index += 1;
         }
     }
 
@@ -230,8 +274,9 @@ impl TimelineView {
                 Style::default().fg(Color::DarkGray),
             ));
         } else {
+            let selected_session_id = self.get_selected_session().map(|(_, id)| id);
             for block in &session_blocks {
-                if let Some(line) = self.render_session_line(block) {
+                if let Some(line) = self.render_session_line(block, selected_session_id) {
                     lines.push(line);
                 }
             }
@@ -251,11 +296,6 @@ impl TimelineView {
             Span::styled(tracked_str, Style::default().fg(Color::Green)),
             Span::styled("  |  Untracked: ", Style::default().fg(Color::White)),
             Span::styled(untracked_str, Style::default().fg(Color::DarkGray)),
-            Span::styled("  |  ", Style::default().fg(Color::White)),
-            Span::styled("[1-3/A]", Style::default().fg(Color::Yellow)),
-            Span::styled(" Zoom  ", Style::default().fg(Color::White)),
-            Span::styled("[Q]", Style::default().fg(Color::Yellow)),
-            Span::styled(" Quit", Style::default().fg(Color::White)),
         ]));
 
         let paragraph = Paragraph::new(lines).block(Block::default().borders(Borders::ALL));
@@ -371,7 +411,11 @@ impl TimelineView {
         result.into_iter().collect()
     }
 
-    fn render_session_line(&self, block: &TimeBlock) -> Option<Line<'static>> {
+    fn render_session_line(
+        &self,
+        block: &TimeBlock,
+        selected_session_id: Option<i64>,
+    ) -> Option<Line<'static>> {
         let task = block.task.as_ref()?;
         let duration_str = format_duration(block.duration_seconds()?);
         let local_start = Local.from_utc_datetime(&block.start.naive_utc());
@@ -380,7 +424,24 @@ impl TimelineView {
         let color = quadrant_color(&block.quadrant?);
         let name = task.name.clone();
 
+        let is_selected = block.session_id.is_some() && block.session_id == selected_session_id;
+
+        let prefix = if is_selected {
+            Span::styled("▶ ", Style::default().fg(Color::Yellow))
+        } else {
+            Span::raw("  ")
+        };
+
+        let name_style = if is_selected {
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default().fg(color)
+        };
+
         Some(Line::from(vec![
+            prefix,
             Span::styled(time_str, Style::default().fg(Color::White)),
             Span::raw(" "),
             Span::styled(
@@ -388,7 +449,7 @@ impl TimelineView {
                 Style::default().fg(Color::Cyan),
             ),
             Span::raw("  "),
-            Span::styled(name, Style::default().fg(color)),
+            Span::styled(name, name_style),
             Span::raw(" "),
             Span::styled(em_tag, Style::default().fg(Color::DarkGray)),
         ]))
@@ -396,14 +457,12 @@ impl TimelineView {
 
     fn render_footer(&self, f: &mut Frame, area: Rect) {
         let paragraph = Paragraph::new(Line::from(vec![
-            Span::styled("[1]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Morning  "),
-            Span::styled("[2]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Afternoon  "),
-            Span::styled("[3]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Evening  "),
-            Span::styled("[A]", Style::default().fg(Color::Yellow)),
-            Span::raw(" All  "),
+            Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Select  "),
+            Span::styled("[E]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Edit  "),
+            Span::styled("[1-3/A]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Zoom  "),
             Span::styled("[Q]", Style::default().fg(Color::Yellow)),
             Span::raw(" Quit"),
         ]))
@@ -590,6 +649,7 @@ mod tests {
         let end = start + chrono::Duration::hours(1);
 
         let block = TimeBlock {
+            session_id: None,
             start,
             end: Some(end),
             task: None,

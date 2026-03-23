@@ -9,7 +9,7 @@ use crossterm::{
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Paragraph},
     Frame, Terminal,
@@ -34,6 +34,7 @@ pub enum HistoryViewResult {
     Done,
     Back,
     PeriodChanged(Period),
+    EditSession(i64),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -90,6 +91,7 @@ pub struct HistoryView {
     tag: String,
     period: Period,
     scroll_offset: usize,
+    selected_session_idx: usize,
 }
 
 impl HistoryView {
@@ -99,6 +101,7 @@ impl HistoryView {
             tag,
             period: Period::Week,
             scroll_offset: 0,
+            selected_session_idx: 0,
         }
     }
 
@@ -157,16 +160,21 @@ impl HistoryView {
                             return Ok(HistoryViewResult::Back);
                         }
                         (_, KeyCode::Up) => {
-                            self.scroll_up();
+                            self.select_prev_session();
                         }
                         (_, KeyCode::Down) => {
-                            self.scroll_down();
+                            self.select_next_session();
                         }
                         (_, KeyCode::Char('j')) => {
-                            self.scroll_down();
+                            self.select_next_session();
                         }
                         (_, KeyCode::Char('k')) => {
-                            self.scroll_up();
+                            self.select_prev_session();
+                        }
+                        (_, KeyCode::Char('e') | KeyCode::Char('E')) => {
+                            if let Some(session) = self.sessions.get(self.selected_session_idx) {
+                                return Ok(HistoryViewResult::EditSession(session.session.id));
+                            }
                         }
                         (_, KeyCode::Char(c)) => {
                             if let Some(new_period) = Period::from_key(c) {
@@ -181,27 +189,16 @@ impl HistoryView {
         }
     }
 
-    fn scroll_up(&mut self) {
-        if self.scroll_offset > 0 {
-            self.scroll_offset -= 1;
+    fn select_prev_session(&mut self) {
+        if self.selected_session_idx > 0 {
+            self.selected_session_idx -= 1;
         }
     }
 
-    fn scroll_down(&mut self) {
-        let total_lines = self.count_display_lines();
-        if self.scroll_offset + 1 < total_lines {
-            self.scroll_offset += 1;
+    fn select_next_session(&mut self) {
+        if self.selected_session_idx + 1 < self.sessions.len() {
+            self.selected_session_idx += 1;
         }
-    }
-
-    fn count_display_lines(&self) -> usize {
-        let grouped = self.group_by_date();
-        let mut count = 0;
-        for (_, sessions) in grouped {
-            count += 1;
-            count += sessions.len();
-        }
-        count
     }
 
     fn group_by_date(&self) -> BTreeMap<NaiveDate, Vec<&SessionWithTask>> {
@@ -291,6 +288,11 @@ impl HistoryView {
         offset: usize,
         max_lines: usize,
     ) -> Vec<(String, Vec<Line<'static>>)> {
+        let selected_session_id = self
+            .sessions
+            .get(self.selected_session_idx)
+            .map(|s| s.session.id);
+
         let mut result = Vec::new();
         let mut line_count = 0;
 
@@ -314,15 +316,32 @@ impl HistoryView {
                 let color = quadrant_color(&em_quadrant);
                 let em_tag = em_quadrant.tag();
 
+                let is_selected = selected_session_id == Some(session.id);
+
+                let prefix = if is_selected {
+                    Span::styled("▶ ", Style::default().fg(Color::Yellow))
+                } else {
+                    Span::raw("  ")
+                };
+
+                let name_style = if is_selected {
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default().fg(color)
+                };
+
                 session_lines.push(Line::from(vec![
-                    Span::styled(format!("  {}", time_str), Style::default().fg(Color::White)),
+                    prefix,
+                    Span::styled(time_str, Style::default().fg(Color::White)),
                     Span::raw(" "),
                     Span::styled(
                         format!("[{}]", duration_str),
                         Style::default().fg(Color::Cyan),
                     ),
                     Span::raw("  "),
-                    Span::styled(task.name.clone(), Style::default().fg(color)),
+                    Span::styled(task.name.clone(), name_style),
                     Span::raw(" "),
                     Span::styled(em_tag.to_string(), Style::default().fg(Color::DarkGray)),
                 ]));
@@ -351,11 +370,11 @@ impl HistoryView {
             Span::styled("[M]", Style::default().fg(Color::Yellow)),
             Span::raw(" Month  "),
             Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Scroll  "),
+            Span::raw(" Select  "),
+            Span::styled("[E]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Edit  "),
             Span::styled("[Q/Esc]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Back  "),
-            Span::styled("[Ctrl+C]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Quit"),
+            Span::raw(" Back"),
         ]))
         .block(Block::default().borders(Borders::ALL));
 

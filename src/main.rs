@@ -3,8 +3,8 @@ use clap_complete::{generate, shells::Shell};
 use std::io::IsTerminal;
 use std::sync::Arc;
 use wdttg::ui::{
-    edit_task, print_timeline_static, select_em_quadrant, EditFormResult, EmSelectorResult,
-    PickerResult, TaskPicker, TimelineView,
+    edit_session, edit_task, print_timeline_static, select_em_quadrant, EditFormResult,
+    EmSelectorResult, PickerResult, SessionEditResult, TaskPicker, TimelineView,
 };
 use wdttg::{
     cli, parse_date, parse_period, parse_relative_time, Commands, Database, EmQuadrant,
@@ -25,6 +25,39 @@ fn format_duration(duration: chrono::Duration) -> String {
 
 fn is_interactive() -> bool {
     std::io::stdout().is_terminal()
+}
+
+fn handle_edit_session(session_id: i64, db: &Arc<Database>) -> Result<bool, String> {
+    let session_service = SessionService::new(Arc::clone(db));
+    let task_service = TaskService::new(Arc::clone(db));
+
+    let session = session_service
+        .get_by_id(session_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Session not found: {}", session_id))?;
+
+    let task = task_service
+        .get_by_id(session.task_id)
+        .map_err(|e| e.to_string())?
+        .ok_or_else(|| format!("Task not found: {}", session.task_id))?;
+
+    let result = edit_session(session, task.name.clone()).map_err(|e| e.to_string())?;
+
+    match result {
+        SessionEditResult::Saved { start, end, notes } => {
+            session_service
+                .update_full(session_id, start, end, notes)
+                .map_err(|e| e.to_string())?;
+            println!("Session updated");
+            Ok(true)
+        }
+        SessionEditResult::Deleted(id) => {
+            session_service.delete(id).map_err(|e| e.to_string())?;
+            println!("Session deleted");
+            Ok(true)
+        }
+        SessionEditResult::Cancelled => Ok(false),
+    }
 }
 
 fn parse_em_arg(em: &str) -> Result<EmQuadrant, String> {
@@ -794,8 +827,21 @@ fn handle_report_timeline(date: &str, no_prompt: bool, db: &Arc<Database>) -> Re
     }
 
     if is_interactive() && !no_prompt {
-        let view = TimelineView::new(blocks, date);
-        view.run().map_err(|e| e.to_string())?;
+        use wdttg::ui::TimelineResult;
+
+        let mut view = TimelineView::new(blocks, date);
+        loop {
+            match view.run().map_err(|e| e.to_string())? {
+                TimelineResult::Cancelled | TimelineResult::Closed => break,
+                TimelineResult::EditSession(session_id) => {
+                    handle_edit_session(session_id, db)?;
+                    let blocks = session_service
+                        .get_day_with_gaps(date)
+                        .map_err(|e| e.to_string())?;
+                    view = TimelineView::new(blocks, date);
+                }
+            }
+        }
     } else {
         print_timeline_static(&blocks, date);
     }
@@ -819,9 +865,23 @@ fn handle_report_history(
             .map_err(|e| e.to_string())?;
 
         if is_interactive() && !no_prompt {
-            use wdttg::ui::HistoryView;
-            let view = HistoryView::new(sessions, tag_name.to_string());
-            let _ = view.run().map_err(|e| e.to_string())?;
+            use wdttg::ui::{HistoryView, HistoryViewResult};
+
+            loop {
+                let (s, e) = parse_period(period).map_err(|err| err.to_string())?;
+                let sessions = session_service
+                    .get_sessions_by_tag(tag_name, s, e)
+                    .map_err(|err| err.to_string())?;
+                let view = HistoryView::new(sessions, tag_name.to_string());
+
+                match view.run().map_err(|e| e.to_string())? {
+                    HistoryViewResult::Done | HistoryViewResult::Back => break,
+                    HistoryViewResult::PeriodChanged(_) => {}
+                    HistoryViewResult::EditSession(session_id) => {
+                        handle_edit_session(session_id, db)?;
+                    }
+                }
+            }
         } else {
             use wdttg::ui::{print_history_static, HistoryViewPeriod};
             let ui_period = match period {
@@ -881,6 +941,9 @@ fn handle_report_history(
                             }
                             HistoryViewResult::PeriodChanged(new_period) => {
                                 history_period = new_period;
+                            }
+                            HistoryViewResult::EditSession(session_id) => {
+                                handle_edit_session(session_id, db)?;
                             }
                         }
                     }

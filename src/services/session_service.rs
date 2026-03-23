@@ -21,6 +21,7 @@ pub type Result<T> = std::result::Result<T, SessionServiceError>;
 
 #[derive(Debug, Clone)]
 pub struct TimeBlock {
+    pub session_id: Option<i64>,
     pub start: DateTime<Utc>,
     pub end: Option<DateTime<Utc>>,
     pub task: Option<Task>,
@@ -140,6 +141,50 @@ impl SessionService {
         Ok(())
     }
 
+    pub fn update_full(
+        &self,
+        id: i64,
+        start: DateTime<Utc>,
+        end: Option<DateTime<Utc>>,
+        notes: Option<String>,
+    ) -> Result<Session> {
+        if let Some(end_time) = end {
+            if end_time <= start {
+                return Err(SessionServiceError::InvalidTimeRange);
+            }
+        }
+
+        let conn = self.db.connection();
+
+        let start_str = format_sqlite_datetime(&start);
+        let end_str = end.map(|dt| format_sqlite_datetime(&dt));
+
+        let rows_affected = conn.execute(
+            "UPDATE sessions SET start_time = ?1, end_time = ?2, notes = ?3 WHERE id = ?4",
+            params![start_str, end_str, notes, id],
+        )?;
+
+        if rows_affected == 0 {
+            return Err(SessionServiceError::NotFound(id));
+        }
+
+        drop(conn);
+
+        self.get_by_id(id)?.ok_or(SessionServiceError::NotFound(id))
+    }
+
+    pub fn delete(&self, id: i64) -> Result<()> {
+        let conn = self.db.connection();
+
+        let rows_affected = conn.execute("DELETE FROM sessions WHERE id = ?1", params![id])?;
+
+        if rows_affected == 0 {
+            return Err(SessionServiceError::NotFound(id));
+        }
+
+        Ok(())
+    }
+
     pub fn get_by_id(&self, id: i64) -> Result<Option<Session>> {
         let conn = self.db.connection();
 
@@ -207,6 +252,7 @@ impl SessionService {
             if let Some(prev_end) = last_end {
                 if swt.session.start_time > prev_end {
                     blocks.push(TimeBlock {
+                        session_id: None,
                         start: prev_end,
                         end: Some(swt.session.start_time),
                         task: None,
@@ -215,6 +261,7 @@ impl SessionService {
                 }
             } else if swt.session.start_time > start_of_day {
                 blocks.push(TimeBlock {
+                    session_id: None,
                     start: start_of_day,
                     end: Some(swt.session.start_time),
                     task: None,
@@ -224,6 +271,7 @@ impl SessionService {
 
             let quadrant = swt.task.em_quadrant();
             blocks.push(TimeBlock {
+                session_id: Some(swt.session.id),
                 start: swt.session.start_time,
                 end: Some(session_end),
                 task: Some(swt.task),
@@ -236,6 +284,7 @@ impl SessionService {
         if let Some(prev_end) = last_end {
             if prev_end < end_of_day {
                 blocks.push(TimeBlock {
+                    session_id: None,
                     start: prev_end,
                     end: Some(end_of_day),
                     task: None,
