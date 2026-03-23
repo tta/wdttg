@@ -13,6 +13,8 @@ pub enum SessionServiceError {
     NotFound(i64),
     #[error("Task not found: {0}")]
     TaskNotFound(i64),
+    #[error("Invalid time range: end time must be after start time")]
+    InvalidTimeRange,
 }
 
 pub type Result<T> = std::result::Result<T, SessionServiceError>;
@@ -218,6 +220,155 @@ impl SessionService {
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
         }
+    }
+
+    pub fn log_session(
+        &self,
+        task_id: i64,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<Session> {
+        let conn = self.db.connection();
+
+        let start_str = format_sqlite_datetime(&start);
+        let end_str = format_sqlite_datetime(&end);
+
+        conn.execute(
+            "INSERT INTO sessions (task_id, start_time, end_time) VALUES (?1, ?2, ?3)",
+            params![task_id, start_str, end_str],
+        )?;
+
+        let id = conn.last_insert_rowid();
+
+        drop(conn);
+
+        self.get_by_id(id)?.ok_or(SessionServiceError::NotFound(id))
+    }
+
+    pub fn get_date_range(&self, start: NaiveDate, end: NaiveDate) -> Result<Vec<SessionWithTask>> {
+        let conn = self.db.connection();
+
+        let start_str = format!("{} 00:00:00", start.format("%Y-%m-%d"));
+        let end_str = format!("{} 23:59:59", end.format("%Y-%m-%d"));
+
+        let mut stmt = conn.prepare(
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.created_at,
+                    t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
+             FROM sessions s
+             INNER JOIN tasks t ON s.task_id = t.id
+             WHERE s.start_time >= ?1 AND s.start_time <= ?2 AND s.end_time IS NOT NULL
+             ORDER BY s.start_time ASC",
+        )?;
+
+        let sessions = stmt
+            .query_map(params![start_str, end_str], |row| {
+                self.row_to_session_with_task(row)
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(sessions)
+    }
+
+    pub fn get_quadrant_time(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<crate::models::QuadrantTime>> {
+        use crate::models::EmQuadrant;
+
+        let conn = self.db.connection();
+
+        let start_str = format!("{} 00:00:00", start.format("%Y-%m-%d"));
+        let end_str = format!("{} 23:59:59", end.format("%Y-%m-%d"));
+
+        let mut stmt = conn.prepare(
+            "SELECT t.em_urgent, t.em_important, SUM(strftime('%s', s.end_time) - strftime('%s', s.start_time)) as total_seconds
+             FROM sessions s
+             INNER JOIN tasks t ON s.task_id = t.id
+             WHERE s.start_time >= ?1 AND s.start_time <= ?2 AND s.end_time IS NOT NULL
+             GROUP BY t.em_urgent, t.em_important",
+        )?;
+
+        let results = stmt
+            .query_map(params![start_str, end_str], |row| {
+                let em_urgent: i32 = row.get(0)?;
+                let em_important: i32 = row.get(1)?;
+                let total_seconds: i64 = row.get(2)?;
+
+                let quadrant = EmQuadrant::new(em_urgent != 0, em_important != 0);
+                Ok(crate::models::QuadrantTime {
+                    quadrant,
+                    total_seconds,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(results)
+    }
+
+    pub fn get_task_time(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<crate::models::TaskTime>> {
+        let conn = self.db.connection();
+
+        let start_str = format!("{} 00:00:00", start.format("%Y-%m-%d"));
+        let end_str = format!("{} 23:59:59", end.format("%Y-%m-%d"));
+
+        let mut stmt = conn.prepare(
+            "SELECT t.name, SUM(strftime('%s', s.end_time) - strftime('%s', s.start_time)) as total_seconds, COUNT(s.id) as session_count
+             FROM sessions s
+             INNER JOIN tasks t ON s.task_id = t.id
+             WHERE s.start_time >= ?1 AND s.start_time <= ?2 AND s.end_time IS NOT NULL
+             GROUP BY t.id, t.name
+             ORDER BY total_seconds DESC",
+        )?;
+
+        let results = stmt
+            .query_map(params![start_str, end_str], |row| {
+                Ok(crate::models::TaskTime {
+                    task_name: row.get(0)?,
+                    total_seconds: row.get(1)?,
+                    session_count: row.get(2)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(results)
+    }
+
+    pub fn get_tag_time(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<crate::models::TagTime>> {
+        let conn = self.db.connection();
+
+        let start_str = format!("{} 00:00:00", start.format("%Y-%m-%d"));
+        let end_str = format!("{} 23:59:59", end.format("%Y-%m-%d"));
+
+        let mut stmt = conn.prepare(
+            "SELECT tg.name, SUM(strftime('%s', s.end_time) - strftime('%s', s.start_time)) as total_seconds
+             FROM sessions s
+             INNER JOIN tasks t ON s.task_id = t.id
+             INNER JOIN task_tags tt ON t.id = tt.task_id
+             INNER JOIN tags tg ON tt.tag_id = tg.id
+             WHERE s.start_time >= ?1 AND s.start_time <= ?2 AND s.end_time IS NOT NULL
+             GROUP BY tg.id, tg.name
+             ORDER BY total_seconds DESC",
+        )?;
+
+        let results = stmt
+            .query_map(params![start_str, end_str], |row| {
+                Ok(crate::models::TagTime {
+                    tag: row.get(0)?,
+                    total_seconds: row.get(1)?,
+                })
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(results)
     }
 
     fn row_to_session(&self, row: &rusqlite::Row) -> std::result::Result<Session, rusqlite::Error> {
@@ -497,5 +648,96 @@ mod tests {
 
         let last = session_service.get_last_session_task().unwrap();
         assert!(last.is_none());
+    }
+
+    #[test]
+    fn test_log_session() {
+        let (session_service, task_service) = create_test_services();
+
+        let task = task_service.get_or_create("test-task").unwrap();
+        let start = Utc::now() - chrono::Duration::hours(2);
+        let end = Utc::now() - chrono::Duration::hours(1);
+
+        let session = session_service.log_session(task.id, start, end).unwrap();
+
+        assert_eq!(session.task_id, task.id);
+        assert!(session.end_time.is_some());
+        assert_eq!(session.duration_minutes().unwrap(), 60);
+    }
+
+    #[test]
+    fn test_get_date_range() {
+        let (session_service, task_service) = create_test_services();
+
+        let task = task_service.get_or_create("test-task").unwrap();
+        let start = Utc::now() - chrono::Duration::hours(2);
+        let end = Utc::now() - chrono::Duration::hours(1);
+
+        session_service.log_session(task.id, start, end).unwrap();
+
+        let today = Utc::now().date_naive();
+        let sessions = session_service.get_date_range(today, today).unwrap();
+
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].task.name, "test-task");
+    }
+
+    #[test]
+    fn test_get_quadrant_time() {
+        let (session_service, task_service) = create_test_services();
+
+        let task = task_service.get_or_create("test-task").unwrap();
+        task_service.set_em_quadrant(task.id, true, true).unwrap();
+
+        let start = Utc::now() - chrono::Duration::hours(2);
+        let end = Utc::now() - chrono::Duration::hours(1);
+
+        session_service.log_session(task.id, start, end).unwrap();
+
+        let today = Utc::now().date_naive();
+        let quadrant_times = session_service.get_quadrant_time(today, today).unwrap();
+
+        assert_eq!(quadrant_times.len(), 1);
+        assert_eq!(quadrant_times[0].total_seconds, 3600);
+    }
+
+    #[test]
+    fn test_get_task_time() {
+        let (session_service, task_service) = create_test_services();
+
+        let task = task_service.get_or_create("test-task").unwrap();
+
+        let start = Utc::now() - chrono::Duration::hours(2);
+        let end = Utc::now() - chrono::Duration::hours(1);
+
+        session_service.log_session(task.id, start, end).unwrap();
+
+        let today = Utc::now().date_naive();
+        let task_times = session_service.get_task_time(today, today).unwrap();
+
+        assert_eq!(task_times.len(), 1);
+        assert_eq!(task_times[0].task_name, "test-task");
+        assert_eq!(task_times[0].total_seconds, 3600);
+        assert_eq!(task_times[0].session_count, 1);
+    }
+
+    #[test]
+    fn test_get_tag_time() {
+        let (session_service, task_service) = create_test_services();
+
+        let task = task_service.get_or_create("coding/feature").unwrap();
+
+        let start = Utc::now() - chrono::Duration::hours(2);
+        let end = Utc::now() - chrono::Duration::hours(1);
+
+        session_service.log_session(task.id, start, end).unwrap();
+
+        let today = Utc::now().date_naive();
+        let tag_times = session_service.get_tag_time(today, today).unwrap();
+
+        assert!(!tag_times.is_empty());
+        let tag_names: Vec<&str> = tag_times.iter().map(|t| t.tag.as_str()).collect();
+        assert!(tag_names.contains(&"coding"));
+        assert!(tag_names.contains(&"feature"));
     }
 }

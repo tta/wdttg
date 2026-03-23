@@ -3,7 +3,10 @@ use std::sync::Arc;
 use wdttg::ui::{
     edit_task, select_em_quadrant, EditFormResult, EmSelectorResult, PickerResult, TaskPicker,
 };
-use wdttg::{cli, Commands, Database, EmQuadrant, SessionService, TaskService, TaskStatus};
+use wdttg::{
+    cli, parse_relative_time, Commands, Database, EmQuadrant, SessionService, TaskService,
+    TaskStatus,
+};
 
 fn format_duration(duration: chrono::Duration) -> String {
     let total_minutes = duration.num_minutes();
@@ -477,6 +480,123 @@ fn handle_edit(
     Ok(())
 }
 
+fn handle_log(
+    task: Option<&str>,
+    start_arg: Option<&str>,
+    end_arg: Option<&str>,
+    no_prompt: bool,
+    db: &Arc<Database>,
+) -> Result<(), String> {
+    let task_service = TaskService::new(Arc::clone(db));
+    let session_service = SessionService::new(Arc::clone(db));
+
+    let task = if let Some(task_name) = task {
+        if !task_name.is_empty() {
+            match task_service
+                .get_by_name(task_name)
+                .map_err(|e| e.to_string())?
+            {
+                Some(existing) => existing,
+                None => task_service
+                    .get_or_create(task_name)
+                    .map_err(|e| e.to_string())?,
+            }
+        } else if is_interactive() && !no_prompt {
+            let tasks = task_service
+                .get_pickable_tasks()
+                .map_err(|e| e.to_string())?;
+            let picker = TaskPicker::new(tasks);
+            match picker.run().map_err(|e| e.to_string())? {
+                PickerResult::Selected(t) => t,
+                PickerResult::CreateNew(name) => task_service
+                    .get_or_create(&name)
+                    .map_err(|e| e.to_string())?,
+                PickerResult::Cancelled => {
+                    println!("Cancelled.");
+                    return Ok(());
+                }
+            }
+        } else {
+            return Err("Task name required in non-interactive mode".to_string());
+        }
+    } else if is_interactive() && !no_prompt {
+        let tasks = task_service
+            .get_pickable_tasks()
+            .map_err(|e| e.to_string())?;
+        let picker = TaskPicker::new(tasks);
+        match picker.run().map_err(|e| e.to_string())? {
+            PickerResult::Selected(t) => t,
+            PickerResult::CreateNew(name) => task_service
+                .get_or_create(&name)
+                .map_err(|e| e.to_string())?,
+            PickerResult::Cancelled => {
+                println!("Cancelled.");
+                return Ok(());
+            }
+        }
+    } else {
+        return Err("Task name required in non-interactive mode".to_string());
+    };
+
+    let now = chrono::Utc::now();
+
+    let start = if let Some(start_str) = start_arg {
+        parse_relative_time(start_str).map_err(|e| e.to_string())?
+    } else if is_interactive() && !no_prompt {
+        print!("Start time (e.g., '2h ago', '14:30', 'yesterday 09:00'): ");
+        use std::io::{self, Write};
+        io::stdout().flush().unwrap();
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+        parse_relative_time(input.trim()).map_err(|e| e.to_string())?
+    } else {
+        return Err("Start time required in non-interactive mode".to_string());
+    };
+
+    let end = if let Some(end_str) = end_arg {
+        parse_relative_time(end_str).map_err(|e| e.to_string())?
+    } else if is_interactive() && !no_prompt {
+        print!("End time (e.g., '1h ago', '15:00', or press Enter for now'): ");
+        use std::io::{self, Write};
+        io::stdout().flush().unwrap();
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+        let input = input.trim();
+        if input.is_empty() {
+            now
+        } else {
+            parse_relative_time(input).map_err(|e| e.to_string())?
+        }
+    } else {
+        return Err("End time required in non-interactive mode".to_string());
+    };
+
+    if end <= start {
+        return Err("End time must be after start time".to_string());
+    }
+
+    if end > now {
+        return Err("End time cannot be in the future".to_string());
+    }
+
+    let session = session_service
+        .log_session(task.id, start, end)
+        .map_err(|e| e.to_string())?;
+
+    let duration = end - start;
+    let duration_str = format_duration(duration);
+    let start_time = start.format("%H:%M");
+    let end_time = end.format("%H:%M");
+
+    println!(
+        "Logged: {} ({}) from {} to {}",
+        task.name, duration_str, start_time, end_time
+    );
+    println!("  Session ID: {}", session.id);
+
+    Ok(())
+}
+
 fn main() {
     let cli = cli::parse();
 
@@ -514,13 +634,13 @@ fn main() {
             cli.no_prompt,
             &db,
         ),
-        Commands::Log { task, start, end } => {
-            println!("Log: not implemented");
-            if task.is_some() || start.is_some() || end.is_some() {
-                println!("  task={:?}, start={:?}, end={:?}", task, start, end);
-            }
-            Ok(())
-        }
+        Commands::Log { task, start, end } => handle_log(
+            task.as_deref(),
+            start.as_deref(),
+            end.as_deref(),
+            cli.no_prompt,
+            &db,
+        ),
         Commands::Report { report_type } => match report_type {
             wdttg::ReportCommands::Quadrant { period } => {
                 println!("Report quadrant: {} (not implemented)", period);
