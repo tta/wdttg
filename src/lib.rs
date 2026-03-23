@@ -10,5 +10,5 @@ pub use db::{Database, DbError};
 pub use models::{
     EmQuadrant, QuadrantTime, Session, SessionWithTask, TagTime, Task, TaskStatus, TaskTime,
 };
-pub use services::{SessionService, TaskService, TaskServiceError};
+pub use services::{SessionService, TaskService, TaskServiceError, TimeBlock};
 pub use time_parser::{parse_date, parse_period, parse_relative_time, TimeParseError};

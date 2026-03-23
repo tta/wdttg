@@ -1,7 +1,8 @@
 use std::io::IsTerminal;
 use std::sync::Arc;
 use wdttg::ui::{
-    edit_task, select_em_quadrant, EditFormResult, EmSelectorResult, PickerResult, TaskPicker,
+    edit_task, print_timeline_static, select_em_quadrant, EditFormResult, EmSelectorResult,
+    PickerResult, TaskPicker, TimelineView,
 };
 use wdttg::{
     cli, parse_date, parse_period, parse_relative_time, Commands, Database, EmQuadrant,
@@ -727,56 +728,25 @@ fn handle_report_tag(period: &str, db: &Arc<Database>) -> Result<(), String> {
     Ok(())
 }
 
-fn handle_report_timeline(date: &str, db: &Arc<Database>) -> Result<(), String> {
+fn handle_report_timeline(date: &str, no_prompt: bool, db: &Arc<Database>) -> Result<(), String> {
     let session_service = SessionService::new(Arc::clone(db));
     let date = parse_date(date).map_err(|e| e.to_string())?;
 
-    let sessions = session_service.get_day(date).map_err(|e| e.to_string())?;
+    let blocks = session_service
+        .get_day_with_gaps(date)
+        .map_err(|e| e.to_string())?;
 
-    if sessions.is_empty() {
+    if blocks.is_empty() {
         println!("No sessions found for: {}", date);
         return Ok(());
     }
 
-    println!("Timeline for {}", date);
-    println!("{}", "=".repeat(60));
-
-    let mut total_seconds: i64 = 0;
-
-    for swt in &sessions {
-        let start_time = swt.session.start_time.format("%H:%M");
-        let end_time = swt
-            .session
-            .end_time
-            .map(|t| t.format("%H:%M").to_string())
-            .unwrap_or_else(|| "now".to_string());
-        let em_tag = swt.task.em_quadrant().tag();
-
-        if let Some(seconds) = swt.duration_seconds() {
-            total_seconds += seconds;
-            println!(
-                "{} - {} [{}] {} {}",
-                start_time,
-                end_time,
-                format_duration(chrono::Duration::seconds(seconds)),
-                swt.task.name,
-                em_tag
-            );
-        } else {
-            println!(
-                "{} - {} [active] {} {}",
-                start_time, end_time, swt.task.name, em_tag
-            );
-        }
+    if is_interactive() && !no_prompt {
+        let view = TimelineView::new(blocks, date);
+        view.run().map_err(|e| e.to_string())?;
+    } else {
+        print_timeline_static(&blocks, date);
     }
-
-    println!("{}", "-".repeat(60));
-    println!(
-        "Total: {} across {} session{}",
-        format_duration(chrono::Duration::seconds(total_seconds)),
-        sessions.len(),
-        if sessions.len() == 1 { "" } else { "s" }
-    );
 
     Ok(())
 }
@@ -890,7 +860,9 @@ fn main() {
             wdttg::ReportCommands::Quadrant { period } => handle_report_quadrant(&period, &db),
             wdttg::ReportCommands::Task { period } => handle_report_task(&period, &db),
             wdttg::ReportCommands::Tag { period } => handle_report_tag(&period, &db),
-            wdttg::ReportCommands::Timeline { date } => handle_report_timeline(&date, &db),
+            wdttg::ReportCommands::Timeline { date } => {
+                handle_report_timeline(&date, cli.no_prompt, &db)
+            }
             wdttg::ReportCommands::History { limit } => handle_report_history(limit, &db),
         },
         Commands::Backup { keep } => handle_backup(keep, &db),

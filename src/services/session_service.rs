@@ -19,6 +19,24 @@ pub enum SessionServiceError {
 
 pub type Result<T> = std::result::Result<T, SessionServiceError>;
 
+#[derive(Debug, Clone)]
+pub struct TimeBlock {
+    pub start: DateTime<Utc>,
+    pub end: Option<DateTime<Utc>>,
+    pub task: Option<Task>,
+    pub quadrant: Option<crate::models::EmQuadrant>,
+}
+
+impl TimeBlock {
+    pub fn duration_seconds(&self) -> Option<i64> {
+        self.end.map(|end| (end - self.start).num_seconds())
+    }
+
+    pub fn is_gap(&self) -> bool {
+        self.task.is_none()
+    }
+}
+
 pub struct SessionService {
     db: Arc<Database>,
 }
@@ -160,6 +178,73 @@ impl SessionService {
             .collect::<std::result::Result<Vec<_>, _>>()?;
 
         Ok(sessions)
+    }
+
+    pub fn get_day_with_gaps(&self, date: NaiveDate) -> Result<Vec<TimeBlock>> {
+        let sessions = self.get_day(date)?;
+
+        if sessions.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut blocks: Vec<TimeBlock> = Vec::new();
+
+        let start_of_day = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
+        let end_of_day = date.and_hms_opt(23, 59, 59).unwrap().and_utc();
+
+        let mut last_end: Option<DateTime<Utc>> = None;
+
+        for swt in sessions {
+            let session_end = swt.session.end_time.unwrap_or_else(|| {
+                let now = Utc::now();
+                if now > end_of_day {
+                    end_of_day
+                } else {
+                    now
+                }
+            });
+
+            if let Some(prev_end) = last_end {
+                if swt.session.start_time > prev_end {
+                    blocks.push(TimeBlock {
+                        start: prev_end,
+                        end: Some(swt.session.start_time),
+                        task: None,
+                        quadrant: None,
+                    });
+                }
+            } else if swt.session.start_time > start_of_day {
+                blocks.push(TimeBlock {
+                    start: start_of_day,
+                    end: Some(swt.session.start_time),
+                    task: None,
+                    quadrant: None,
+                });
+            }
+
+            let quadrant = swt.task.em_quadrant();
+            blocks.push(TimeBlock {
+                start: swt.session.start_time,
+                end: Some(session_end),
+                task: Some(swt.task),
+                quadrant: Some(quadrant),
+            });
+
+            last_end = Some(session_end);
+        }
+
+        if let Some(prev_end) = last_end {
+            if prev_end < end_of_day {
+                blocks.push(TimeBlock {
+                    start: prev_end,
+                    end: Some(end_of_day),
+                    task: None,
+                    quadrant: None,
+                });
+            }
+        }
+
+        Ok(blocks)
     }
 
     pub fn get_recent(&self, limit: i64) -> Result<Vec<SessionWithTask>> {
