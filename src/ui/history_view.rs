@@ -33,6 +33,7 @@ pub type Result<T> = std::result::Result<T, HistoryViewError>;
 pub enum HistoryViewResult {
     Done,
     Back,
+    PeriodChanged(Period),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -168,7 +169,12 @@ impl HistoryView {
                         (_, KeyCode::Char('k')) => {
                             self.scroll_up();
                         }
-                        (_, KeyCode::Char(c)) => if let Some(_period) = Period::from_key(c) {},
+                        (_, KeyCode::Char(c)) => {
+                            if let Some(new_period) = Period::from_key(c) {
+                                self.period = new_period;
+                                return Ok(HistoryViewResult::PeriodChanged(new_period));
+                            }
+                        }
                         _ => {}
                     }
                 }

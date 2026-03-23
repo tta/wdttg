@@ -30,6 +30,7 @@ pub type Result<T> = std::result::Result<T, TagPickerError>;
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TagPickerResult {
     Selected(String),
+    PeriodChanged(Period),
     Cancelled,
 }
 
@@ -176,8 +177,9 @@ impl TagPicker {
                             }
                         }
                         (_, KeyCode::Char(c)) => {
-                            if let Some(period) = Period::from_key(c) {
-                                self.period = period;
+                            if let Some(new_period) = Period::from_key(c) {
+                                self.period = new_period;
+                                return Ok(TagPickerResult::PeriodChanged(new_period));
                             }
                         }
                         _ => {}

@@ -800,40 +800,66 @@ fn handle_report_history(
             print_history_static(&sessions, tag_name, ui_period);
         }
     } else if is_interactive() && !no_prompt {
+        use wdttg::ui::{HistoryView, HistoryViewPeriod, HistoryViewResult};
         use wdttg::ui::{TagPicker, TagPickerPeriod, TagPickerResult};
-        let tags = session_service
-            .get_tags_with_time(start, end)
-            .map_err(|e| e.to_string())?;
 
-        if tags.is_empty() {
-            println!("No tagged sessions found for period: {}", period);
-            return Ok(());
-        }
-
-        let ui_period = match period {
+        let mut current_period = match period {
             "day" => TagPickerPeriod::Day,
             "month" => TagPickerPeriod::Month,
             _ => TagPickerPeriod::Week,
         };
 
-        let picker = TagPicker::new(tags).with_period(ui_period);
-        match picker.run().map_err(|e| e.to_string())? {
-            TagPickerResult::Selected(selected_tag) => {
-                let sessions = session_service
-                    .get_sessions_by_tag(&selected_tag, start, end)
-                    .map_err(|e| e.to_string())?;
+        loop {
+            let (start, end) = current_period.date_range();
+            let tags = session_service
+                .get_tags_with_time(start, end)
+                .map_err(|e| e.to_string())?;
 
-                use wdttg::ui::{HistoryView, HistoryViewPeriod};
-                let history_period = match period {
-                    "day" => HistoryViewPeriod::Day,
-                    "month" => HistoryViewPeriod::Month,
-                    _ => HistoryViewPeriod::Week,
-                };
-                let view = HistoryView::new(sessions, selected_tag).with_period(history_period);
-                let _ = view.run().map_err(|e| e.to_string())?;
+            if tags.is_empty() {
+                println!(
+                    "No tagged sessions found for period: {}",
+                    current_period.to_period_str()
+                );
+                return Ok(());
             }
-            TagPickerResult::Cancelled => {
-                println!("Cancelled.");
+
+            let picker = TagPicker::new(tags).with_period(current_period);
+            match picker.run().map_err(|e| e.to_string())? {
+                TagPickerResult::Selected(selected_tag) => {
+                    let mut history_period = match current_period {
+                        TagPickerPeriod::Day => HistoryViewPeriod::Day,
+                        TagPickerPeriod::Week => HistoryViewPeriod::Week,
+                        TagPickerPeriod::Month => HistoryViewPeriod::Month,
+                    };
+
+                    loop {
+                        let (h_start, h_end) = history_period.date_range();
+                        let sessions = session_service
+                            .get_sessions_by_tag(&selected_tag, h_start, h_end)
+                            .map_err(|e| e.to_string())?;
+
+                        let view = HistoryView::new(sessions, selected_tag.clone())
+                            .with_period(history_period);
+                        match view.run().map_err(|e| e.to_string())? {
+                            HistoryViewResult::Done => {
+                                return Ok(());
+                            }
+                            HistoryViewResult::Back => {
+                                break;
+                            }
+                            HistoryViewResult::PeriodChanged(new_period) => {
+                                history_period = new_period;
+                            }
+                        }
+                    }
+                }
+                TagPickerResult::PeriodChanged(new_period) => {
+                    current_period = new_period;
+                }
+                TagPickerResult::Cancelled => {
+                    println!("Cancelled.");
+                    return Ok(());
+                }
             }
         }
     } else {
