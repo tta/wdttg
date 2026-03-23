@@ -118,3 +118,68 @@ fn test_reopen_existing_database() {
         assert_eq!(count, 1, "Data should persist after reopening");
     }
 }
+
+mod cli_tests {
+    use assert_cmd::Command;
+    use predicates::prelude::*;
+
+    #[test]
+    fn test_help_shows_all_commands() {
+        let mut cmd = Command::cargo_bin("wdttg").unwrap();
+        cmd.arg("--help")
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("start"))
+            .stdout(predicate::str::contains("stop"))
+            .stdout(predicate::str::contains("status"))
+            .stdout(predicate::str::contains("done"))
+            .stdout(predicate::str::contains("reopen"))
+            .stdout(predicate::str::contains("archive"))
+            .stdout(predicate::str::contains("edit"))
+            .stdout(predicate::str::contains("log"))
+            .stdout(predicate::str::contains("report"))
+            .stdout(predicate::str::contains("backup"));
+    }
+
+    #[test]
+    fn test_start_help_shows_flags() {
+        let mut cmd = Command::cargo_bin("wdttg").unwrap();
+        cmd.args(["start", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("--em"))
+            .stdout(predicate::str::contains("--no-prompt"))
+            .stdout(predicate::str::contains("QUERY"));
+    }
+
+    #[test]
+    fn test_no_prompt_flag_parsed() {
+        let mut cmd = Command::cargo_bin("wdttg").unwrap();
+        cmd.args(["--no-prompt", "start", "test"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Start: test"));
+    }
+
+    #[test]
+    fn test_invalid_command_shows_error() {
+        let mut cmd = Command::cargo_bin("wdttg").unwrap();
+        cmd.arg("invalid")
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("error"));
+    }
+
+    #[test]
+    fn test_report_subcommands() {
+        let mut cmd = Command::cargo_bin("wdttg").unwrap();
+        cmd.args(["report", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("quadrant"))
+            .stdout(predicate::str::contains("task"))
+            .stdout(predicate::str::contains("tag"))
+            .stdout(predicate::str::contains("timeline"))
+            .stdout(predicate::str::contains("history"));
+    }
+}
