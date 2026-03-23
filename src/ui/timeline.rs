@@ -189,45 +189,56 @@ impl TimelineView {
     }
 
     fn render_timeline(&self, f: &mut Frame, area: Rect) {
-        let (start_hour, end_hour) = self.zoom.time_range();
-        let total_minutes = (end_hour - start_hour) as i64 * 60;
         let available_width = (area.width as usize).saturating_sub(2);
+        let mut lines: Vec<Line> = Vec::new();
 
+        let separator = "─".repeat(available_width);
+        lines.push(Line::styled(
+            separator.clone(),
+            Style::default().fg(Color::DarkGray),
+        ));
+
+        let bar_spans = self.render_24h_bar(available_width);
+        lines.push(Line::from(bar_spans));
+
+        let markers = self.render_hour_markers(available_width);
+        lines.push(Line::styled(markers, Style::default().fg(Color::DarkGray)));
+
+        lines.push(Line::styled(
+            separator.clone(),
+            Style::default().fg(Color::DarkGray),
+        ));
+
+        let (start_hour, end_hour) = self.zoom.time_range();
         let visible_blocks: Vec<&TimeBlock> = self
             .blocks
             .iter()
             .filter(|b| {
                 let block_start_hour = b.start.hour() as u32;
-                block_start_hour < end_hour && start_hour < end_hour
+                block_start_hour < end_hour && block_start_hour >= start_hour
             })
             .collect();
 
-        let mut lines: Vec<Line> = Vec::new();
+        let mut session_blocks: Vec<&TimeBlock> =
+            visible_blocks.into_iter().filter(|b| !b.is_gap()).collect();
+        session_blocks.sort_by(|a, b| b.start.cmp(&a.start));
 
-        let separator_line = "═".repeat(available_width);
-        lines.push(Line::styled(
-            separator_line.clone(),
-            Style::default().fg(Color::Cyan),
-        ));
-
-        if visible_blocks.is_empty() {
+        if session_blocks.is_empty() {
             lines.push(Line::styled(
                 "No sessions in this time range",
                 Style::default().fg(Color::DarkGray),
             ));
         } else {
-            for block in &visible_blocks {
-                if let Some(line) =
-                    self.render_block_line(block, start_hour, total_minutes, available_width)
-                {
+            for block in &session_blocks {
+                if let Some(line) = self.render_session_line(block) {
                     lines.push(line);
                 }
             }
         }
 
         lines.push(Line::styled(
-            separator_line,
-            Style::default().fg(Color::Cyan),
+            separator,
+            Style::default().fg(Color::DarkGray),
         ));
 
         let (tracked_seconds, untracked_seconds) = self.calculate_totals();
@@ -235,101 +246,150 @@ impl TimelineView {
         let untracked_str = format_duration(untracked_seconds);
 
         lines.push(Line::from(vec![
-            Span::styled("Total: ", Style::default().fg(Color::White)),
-            Span::styled(
-                format!("{} tracked", tracked_str),
-                Style::default().fg(Color::Green),
-            ),
-            Span::styled(", ", Style::default().fg(Color::White)),
-            Span::styled(
-                format!("{} untracked", untracked_str),
-                Style::default().fg(Color::DarkGray),
-            ),
+            Span::styled("Tracked: ", Style::default().fg(Color::White)),
+            Span::styled(tracked_str, Style::default().fg(Color::Green)),
+            Span::styled("  |  Untracked: ", Style::default().fg(Color::White)),
+            Span::styled(untracked_str, Style::default().fg(Color::DarkGray)),
+            Span::styled("  |  ", Style::default().fg(Color::White)),
+            Span::styled("[1-3/A]", Style::default().fg(Color::Yellow)),
+            Span::styled(" Zoom  ", Style::default().fg(Color::White)),
+            Span::styled("[Q]", Style::default().fg(Color::Yellow)),
+            Span::styled(" Quit", Style::default().fg(Color::White)),
         ]));
 
         let paragraph = Paragraph::new(lines).block(Block::default().borders(Borders::ALL));
-
         f.render_widget(paragraph, area);
     }
 
-    fn render_block_line(
-        &self,
-        block: &TimeBlock,
-        start_hour: u32,
-        total_minutes: i64,
-        width: usize,
-    ) -> Option<Line<'static>> {
-        let end = block.end?;
+    fn render_24h_bar(&self, width: usize) -> Vec<Span<'static>> {
+        let mins_per_char = (24.0 * 60.0) / width as f64;
+        let mut positions: Vec<Option<(Color, char)>> = vec![None; width];
 
-        let block_start_minutes = (block.start.hour() as i64 * 60 + block.start.minute() as i64)
-            - (start_hour as i64 * 60);
-        let block_end_minutes =
-            (end.hour() as i64 * 60 + end.minute() as i64) - (start_hour as i64 * 60);
+        for block in &self.blocks {
+            if block.is_gap() {
+                continue;
+            }
 
-        if block_end_minutes <= 0 || block_start_minutes >= total_minutes {
-            return None;
+            let quadrant = match &block.quadrant {
+                Some(q) => q,
+                None => continue,
+            };
+            let color = quadrant_color(quadrant);
+
+            let start_mins = block.start.hour() as f64 * 60.0 + block.start.minute() as f64;
+            let end_mins = block
+                .end
+                .map_or(24.0 * 60.0, |e| e.hour() as f64 * 60.0 + e.minute() as f64);
+
+            let start_idx = (start_mins / mins_per_char) as usize;
+            let end_idx = ((end_mins / mins_per_char) as usize).min(width);
+
+            for i in start_idx..end_idx {
+                if i < width {
+                    positions[i] = Some((color, '█'));
+                }
+            }
         }
 
-        let visible_start = block_start_minutes.max(0) as usize;
-        let visible_end = (block_end_minutes.min(total_minutes) as usize).min(width);
+        let mut spans: Vec<Span<'static>> = Vec::new();
+        let mut current_color: Option<Color> = None;
+        let mut current_chars = String::new();
 
-        let chars_before = (visible_start * width / total_minutes as usize).min(width);
-        let chars_block = ((visible_end - visible_start) * width / total_minutes as usize)
-            .min(width.saturating_sub(chars_before));
-
-        let (fill_char, color, task_info) = if block.is_gap() {
-            ('░', Color::DarkGray, None)
-        } else {
-            let quadrant = block.quadrant?;
-            let color = quadrant_color(&quadrant);
-            let task = block.task.as_ref()?;
-            let duration_str = format_duration(block.duration_seconds().unwrap_or(0));
-            let em_tag = task.em_quadrant().tag();
-            let info = format!("{} {} {}", duration_str, task.name, em_tag);
-            ('█', color, Some(info))
-        };
-
-        let mut spans: Vec<Span> = Vec::new();
-
-        if chars_before > 0 {
-            spans.push(Span::raw(" ".repeat(chars_before)));
+        for pos in positions {
+            match pos {
+                Some((color, ch)) => {
+                    if current_color == Some(color) {
+                        current_chars.push(ch);
+                    } else {
+                        if !current_chars.is_empty() {
+                            let style = current_color
+                                .map(|c| Style::default().fg(c))
+                                .unwrap_or_default();
+                            spans.push(Span::styled(std::mem::take(&mut current_chars), style));
+                        }
+                        current_color = Some(color);
+                        current_chars.push(ch);
+                    }
+                }
+                None => {
+                    if current_color != None {
+                        if !current_chars.is_empty() {
+                            let style = current_color
+                                .map(|c| Style::default().fg(c))
+                                .unwrap_or_default();
+                            spans.push(Span::styled(std::mem::take(&mut current_chars), style));
+                        }
+                        current_color = None;
+                    }
+                    current_chars.push(' ');
+                }
+            }
         }
 
-        if chars_block > 0 {
-            spans.push(Span::styled(
-                fill_char.to_string().repeat(chars_block),
-                Style::default().fg(color),
-            ));
+        if !current_chars.is_empty() {
+            let style = current_color
+                .map(|c| Style::default().fg(c))
+                .unwrap_or_default();
+            spans.push(Span::styled(current_chars, style));
         }
 
-        if let Some(info) = task_info {
-            spans.push(Span::raw("  "));
-            spans.push(Span::styled(info, Style::default().fg(Color::White)));
+        spans
+    }
+
+    fn render_hour_markers(&self, width: usize) -> String {
+        let hours = [0, 4, 8, 12, 16, 20, 24];
+        let mut result = vec![' '; width];
+
+        for &hour in &hours {
+            let pos = ((hour as f64 / 24.0) * width as f64) as usize;
+            let label = hour.to_string();
+            let start = pos.min(width.saturating_sub(label.len()));
+            for (i, ch) in label.chars().enumerate() {
+                if start + i < width {
+                    result[start + i] = ch;
+                }
+            }
         }
 
-        Some(Line::from(spans))
+        result.into_iter().collect()
+    }
+
+    fn render_session_line(&self, block: &TimeBlock) -> Option<Line<'static>> {
+        let task = block.task.as_ref()?;
+        let duration_str = format_duration(block.duration_seconds()?);
+        let time_str = block.start.format("%H:%M").to_string();
+        let em_tag = task.em_quadrant().tag().to_string();
+        let color = quadrant_color(&block.quadrant?);
+        let name = task.name.clone();
+
+        Some(Line::from(vec![
+            Span::styled(time_str, Style::default().fg(Color::White)),
+            Span::raw(" "),
+            Span::styled(
+                format!("[{}]", duration_str),
+                Style::default().fg(Color::Cyan),
+            ),
+            Span::raw("  "),
+            Span::styled(name, Style::default().fg(color)),
+            Span::raw(" "),
+            Span::styled(em_tag, Style::default().fg(Color::DarkGray)),
+        ]))
     }
 
     fn render_footer(&self, f: &mut Frame, area: Rect) {
-        let mut spans: Vec<Span> = Vec::new();
-
-        spans.push(Span::styled("[1]", Style::default().fg(Color::Yellow)));
-        spans.push(Span::raw(" Morning  "));
-
-        spans.push(Span::styled("[2]", Style::default().fg(Color::Yellow)));
-        spans.push(Span::raw(" Afternoon  "));
-
-        spans.push(Span::styled("[3]", Style::default().fg(Color::Yellow)));
-        spans.push(Span::raw(" Evening  "));
-
-        spans.push(Span::styled("[A]", Style::default().fg(Color::Yellow)));
-        spans.push(Span::raw(" All day  "));
-
-        spans.push(Span::styled("[Q]", Style::default().fg(Color::Yellow)));
-        spans.push(Span::raw(" Quit"));
-
-        let paragraph =
-            Paragraph::new(Line::from(spans)).block(Block::default().borders(Borders::ALL));
+        let paragraph = Paragraph::new(Line::from(vec![
+            Span::styled("[1]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Morning  "),
+            Span::styled("[2]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Afternoon  "),
+            Span::styled("[3]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Evening  "),
+            Span::styled("[A]", Style::default().fg(Color::Yellow)),
+            Span::raw(" All  "),
+            Span::styled("[Q]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Quit"),
+        ]))
+        .block(Block::default().borders(Borders::ALL));
 
         f.render_widget(paragraph, area);
     }
@@ -373,43 +433,87 @@ fn format_duration(seconds: i64) -> String {
 }
 
 pub fn print_timeline_static(blocks: &[TimeBlock], date: NaiveDate) {
-    println!("Timeline for {} (full day)", date.format("%Y-%m-%d"));
-    println!("{}", "═".repeat(70));
+    println!("Timeline for {}", date.format("%Y-%m-%d"));
+    let width = 78;
+    println!("{}", "─".repeat(width));
 
-    if blocks.is_empty() {
+    print_24h_bar_static(blocks, width);
+    print_hour_markers_static(width);
+
+    println!("{}", "─".repeat(width));
+
+    let mut session_blocks: Vec<&TimeBlock> = blocks.iter().filter(|b| !b.is_gap()).collect();
+    session_blocks.sort_by(|a, b| b.start.cmp(&a.start));
+
+    if session_blocks.is_empty() {
         println!("No sessions found for this date");
     } else {
-        for block in blocks {
-            let start_time = block.start.format("%H:%M");
-            let end_time = block
-                .end
-                .map(|e| e.format("%H:%M").to_string())
-                .unwrap_or_else(|| "now".to_string());
-
-            if block.is_gap() {
-                println!("{} - {} [untracked]", start_time, end_time);
-            } else if let Some(task) = &block.task {
+        for block in &session_blocks {
+            if let Some(task) = &block.task {
+                let time_str = block.start.format("%H:%M");
                 let duration_str = block
                     .duration_seconds()
                     .map(|s| format_duration(s))
                     .unwrap_or_else(|| "active".to_string());
                 let em_tag = task.em_quadrant().tag();
-                println!(
-                    "{} - {} [{}] {} {}",
-                    start_time, end_time, duration_str, task.name, em_tag
-                );
+                println!("{} [{}]  {} {}", time_str, duration_str, task.name, em_tag);
             }
         }
     }
 
-    println!("{}", "═".repeat(70));
+    println!("{}", "─".repeat(width));
 
     let (tracked, untracked) = calculate_totals_static(blocks);
     println!(
-        "Total: {} tracked, {} untracked",
+        "Tracked: {}  |  Untracked: {}",
         format_duration(tracked),
         format_duration(untracked)
     );
+}
+
+fn print_24h_bar_static(blocks: &[TimeBlock], width: usize) {
+    let mins_per_char = (24.0 * 60.0) / width as f64;
+    let mut bar: Vec<char> = vec![' '; width];
+
+    for block in blocks {
+        if block.is_gap() {
+            continue;
+        }
+
+        let start_mins = block.start.hour() as f64 * 60.0 + block.start.minute() as f64;
+        let end_mins = block
+            .end
+            .map_or(24.0 * 60.0, |e| e.hour() as f64 * 60.0 + e.minute() as f64);
+
+        let start_idx = (start_mins / mins_per_char) as usize;
+        let end_idx = ((end_mins / mins_per_char) as usize).min(width);
+
+        for i in start_idx..end_idx {
+            if i < width {
+                bar[i] = '█';
+            }
+        }
+    }
+
+    println!("{}", bar.into_iter().collect::<String>());
+}
+
+fn print_hour_markers_static(width: usize) {
+    let hours = [0, 4, 8, 12, 16, 20, 24];
+    let mut result = vec![' '; width];
+
+    for &hour in &hours {
+        let pos = ((hour as f64 / 24.0) * width as f64) as usize;
+        let label = hour.to_string();
+        let start = pos.min(width.saturating_sub(label.len()));
+        for (i, ch) in label.chars().enumerate() {
+            if start + i < width {
+                result[start + i] = ch;
+            }
+        }
+    }
+
+    println!("{}", result.into_iter().collect::<String>());
 }
 
 fn calculate_totals_static(blocks: &[TimeBlock]) -> (i64, i64) {
