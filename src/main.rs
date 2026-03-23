@@ -600,6 +600,17 @@ fn handle_log(
     Ok(())
 }
 
+fn quadrant_ansi_color(quadrant: &EmQuadrant) -> &'static str {
+    match quadrant {
+        EmQuadrant::DoFirst => "\x1b[31m",   // Red
+        EmQuadrant::Schedule => "\x1b[32m",  // Green
+        EmQuadrant::Delegate => "\x1b[33m",  // Yellow
+        EmQuadrant::Eliminate => "\x1b[90m", // Dark Gray
+    }
+}
+
+const ANSI_RESET: &str = "\x1b[0m";
+
 fn handle_report_quadrant(period: &str, db: &Arc<Database>) -> Result<(), String> {
     let session_service = SessionService::new(Arc::clone(db));
     let (start, end) = parse_period(period).map_err(|e| e.to_string())?;
@@ -624,9 +635,12 @@ fn handle_report_quadrant(period: &str, db: &Arc<Database>) -> Result<(), String
         } else {
             0.0
         };
+        let color = quadrant_ansi_color(&qt.quadrant);
         println!(
-            "{}: {} ({:.1}%) - {}",
+            "{}{}{}: {} ({:.1}%) - {}",
+            color,
             qt.quadrant.tag(),
+            ANSI_RESET,
             format_duration(chrono::Duration::seconds(qt.total_seconds)),
             percentage,
             qt.quadrant.description()
