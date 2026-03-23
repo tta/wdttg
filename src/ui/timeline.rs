@@ -614,6 +614,7 @@ fn calculate_totals_static(blocks: &[TimeBlock]) -> (i64, i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::Task;
     use chrono::Utc;
 
     #[test]
@@ -658,5 +659,118 @@ mod tests {
 
         assert_eq!(block.duration_seconds(), Some(3600));
         assert!(block.is_gap());
+    }
+
+    fn create_test_task(id: i64, name: &str) -> Task {
+        Task {
+            id,
+            name: name.to_string(),
+            notes: None,
+            em_urgent: false,
+            em_important: true,
+            status: crate::models::TaskStatus::Active,
+            recurring: false,
+            tags: vec![],
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        }
+    }
+
+    fn create_test_blocks() -> Vec<TimeBlock> {
+        let now = Utc::now();
+        vec![
+            TimeBlock {
+                session_id: None,
+                start: now,
+                end: Some(now + chrono::Duration::minutes(30)),
+                task: None,
+                quadrant: None,
+            },
+            TimeBlock {
+                session_id: Some(1),
+                start: now + chrono::Duration::minutes(30),
+                end: Some(now + chrono::Duration::hours(1)),
+                task: Some(create_test_task(1, "task-1")),
+                quadrant: Some(EmQuadrant::Schedule),
+            },
+            TimeBlock {
+                session_id: None,
+                start: now + chrono::Duration::hours(1),
+                end: Some(now + chrono::Duration::hours(2)),
+                task: None,
+                quadrant: None,
+            },
+            TimeBlock {
+                session_id: Some(2),
+                start: now + chrono::Duration::hours(2),
+                end: Some(now + chrono::Duration::hours(3)),
+                task: Some(create_test_task(2, "task-2")),
+                quadrant: Some(EmQuadrant::DoFirst),
+            },
+        ]
+    }
+
+    #[test]
+    fn test_timeline_view_session_blocks_filters_gaps() {
+        let blocks = create_test_blocks();
+        let view = TimelineView::new(blocks, Utc::now().date_naive());
+
+        assert_eq!(view.session_blocks.len(), 2);
+        assert_eq!(view.session_blocks[0], (1, 1));
+        assert_eq!(view.session_blocks[1], (3, 2));
+    }
+
+    #[test]
+    fn test_timeline_view_get_selected_session() {
+        let blocks = create_test_blocks();
+        let view = TimelineView::new(blocks, Utc::now().date_naive());
+
+        assert_eq!(view.get_selected_session(), Some((1, 1)));
+    }
+
+    #[test]
+    fn test_timeline_view_select_next_session() {
+        let blocks = create_test_blocks();
+        let mut view = TimelineView::new(blocks, Utc::now().date_naive());
+
+        assert_eq!(view.get_selected_session(), Some((1, 1)));
+
+        view.select_next_session();
+        assert_eq!(view.get_selected_session(), Some((3, 2)));
+
+        view.select_next_session();
+        assert_eq!(view.get_selected_session(), Some((3, 2)));
+    }
+
+    #[test]
+    fn test_timeline_view_select_prev_session() {
+        let blocks = create_test_blocks();
+        let mut view = TimelineView::new(blocks, Utc::now().date_naive());
+
+        view.selected_index = 1;
+        assert_eq!(view.get_selected_session(), Some((3, 2)));
+
+        view.select_prev_session();
+        assert_eq!(view.get_selected_session(), Some((1, 1)));
+
+        view.select_prev_session();
+        assert_eq!(view.get_selected_session(), Some((1, 1)));
+    }
+
+    #[test]
+    fn test_timeline_view_no_session_blocks() {
+        let now = Utc::now();
+        let blocks = vec![TimeBlock {
+            session_id: None,
+            start: now,
+            end: Some(now + chrono::Duration::hours(1)),
+            task: None,
+            quadrant: None,
+        }];
+
+        let view = TimelineView::new(blocks, Utc::now().date_naive());
+
+        assert!(view.session_blocks.is_empty());
+        assert_eq!(view.get_selected_session(), None);
     }
 }

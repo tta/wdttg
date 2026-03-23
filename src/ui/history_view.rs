@@ -437,6 +437,33 @@ pub fn print_history_static(sessions: &[SessionWithTask], tag: &str, period: Per
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::models::{Session, Task, TaskStatus};
+
+    fn create_test_session_with_task(session_id: i64, task_name: &str) -> SessionWithTask {
+        let now = chrono::Utc::now();
+        SessionWithTask {
+            session: Session {
+                id: session_id,
+                task_id: 1,
+                start_time: now,
+                end_time: Some(now + chrono::Duration::hours(1)),
+                notes: None,
+                created_at: now,
+            },
+            task: Task {
+                id: 1,
+                name: task_name.to_string(),
+                notes: None,
+                em_urgent: false,
+                em_important: true,
+                status: TaskStatus::Active,
+                recurring: false,
+                tags: vec![],
+                created_at: now,
+                updated_at: now,
+            },
+        }
+    }
 
     #[test]
     fn test_period_from_key() {
@@ -455,5 +482,64 @@ mod tests {
         assert_eq!(format_duration(60), "1m");
         assert_eq!(format_duration(3600), "1h 0m");
         assert_eq!(format_duration(3661), "1h 1m");
+    }
+
+    #[test]
+    fn test_history_view_select_next_session() {
+        let sessions = vec![
+            create_test_session_with_task(1, "task-1"),
+            create_test_session_with_task(2, "task-2"),
+            create_test_session_with_task(3, "task-3"),
+        ];
+
+        let mut view = HistoryView::new(sessions, "test".to_string());
+
+        assert_eq!(view.selected_session_idx, 0);
+
+        view.select_next_session();
+        assert_eq!(view.selected_session_idx, 1);
+
+        view.select_next_session();
+        assert_eq!(view.selected_session_idx, 2);
+
+        view.select_next_session();
+        assert_eq!(view.selected_session_idx, 2);
+    }
+
+    #[test]
+    fn test_history_view_select_prev_session() {
+        let sessions = vec![
+            create_test_session_with_task(1, "task-1"),
+            create_test_session_with_task(2, "task-2"),
+        ];
+
+        let mut view = HistoryView::new(sessions, "test".to_string());
+        view.selected_session_idx = 1;
+
+        assert_eq!(view.selected_session_idx, 1);
+
+        view.select_prev_session();
+        assert_eq!(view.selected_session_idx, 0);
+
+        view.select_prev_session();
+        assert_eq!(view.selected_session_idx, 0);
+    }
+
+    #[test]
+    fn test_history_view_empty_sessions() {
+        let sessions: Vec<SessionWithTask> = vec![];
+        let view = HistoryView::new(sessions, "test".to_string());
+
+        assert_eq!(view.selected_session_idx, 0);
+        assert!(view.sessions.is_empty());
+    }
+
+    #[test]
+    fn test_history_view_with_period() {
+        let sessions = vec![create_test_session_with_task(1, "task-1")];
+
+        let view = HistoryView::new(sessions, "test".to_string()).with_period(Period::Month);
+
+        assert_eq!(view.period(), Period::Month);
     }
 }

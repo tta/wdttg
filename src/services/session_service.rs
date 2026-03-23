@@ -661,6 +661,7 @@ fn parse_sqlite_datetime(s: &str) -> std::result::Result<DateTime<Utc>, rusqlite
 mod tests {
     use super::*;
     use crate::services::TaskService;
+    use chrono::Timelike;
 
     fn create_test_services() -> (SessionService, TaskService) {
         let db = Database::open_memory().expect("Failed to create in-memory database");
@@ -994,5 +995,114 @@ mod tests {
             .unwrap();
         assert_eq!(meeting_sessions.len(), 1);
         assert!(meeting_sessions[0].task.name.contains("meeting"));
+    }
+
+    #[test]
+    fn test_update_full() {
+        let (session_service, task_service) = create_test_services();
+
+        let task = task_service.get_or_create("test-task").unwrap();
+        let session = session_service.start(task.id).unwrap();
+
+        let new_start = (Utc::now() - chrono::Duration::hours(3))
+            .with_nanosecond(0)
+            .unwrap();
+        let new_end = (Utc::now() - chrono::Duration::hours(1))
+            .with_nanosecond(0)
+            .unwrap();
+
+        let updated = session_service
+            .update_full(
+                session.id,
+                new_start,
+                Some(new_end),
+                Some("Test notes".to_string()),
+            )
+            .unwrap();
+
+        assert_eq!(updated.start_time, new_start);
+        assert_eq!(updated.end_time, Some(new_end));
+        assert_eq!(updated.notes, Some("Test notes".to_string()));
+    }
+
+    #[test]
+    fn test_update_full_with_active_session() {
+        let (session_service, task_service) = create_test_services();
+
+        let task = task_service.get_or_create("test-task").unwrap();
+        let session = session_service.start(task.id).unwrap();
+
+        let new_start = (Utc::now() - chrono::Duration::hours(1))
+            .with_nanosecond(0)
+            .unwrap();
+
+        let updated = session_service
+            .update_full(session.id, new_start, None, None)
+            .unwrap();
+
+        assert_eq!(updated.start_time, new_start);
+        assert!(updated.end_time.is_none());
+        assert!(updated.notes.is_none());
+    }
+
+    #[test]
+    fn test_update_full_invalid_time_range() {
+        let (session_service, task_service) = create_test_services();
+
+        let task = task_service.get_or_create("test-task").unwrap();
+        let session = session_service.start(task.id).unwrap();
+
+        let start = Utc::now();
+        let end = start - chrono::Duration::hours(1);
+
+        let result = session_service.update_full(session.id, start, Some(end), None);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            SessionServiceError::InvalidTimeRange
+        ));
+    }
+
+    #[test]
+    fn test_update_full_not_found() {
+        let (session_service, _) = create_test_services();
+
+        let result = session_service.update_full(9999, Utc::now(), None, None);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            SessionServiceError::NotFound(9999)
+        ));
+    }
+
+    #[test]
+    fn test_delete_session() {
+        let (session_service, task_service) = create_test_services();
+
+        let task = task_service.get_or_create("test-task").unwrap();
+        let session = session_service.start(task.id).unwrap();
+
+        let before_delete = session_service.get_by_id(session.id).unwrap();
+        assert!(before_delete.is_some());
+
+        session_service.delete(session.id).unwrap();
+
+        let after_delete = session_service.get_by_id(session.id).unwrap();
+        assert!(after_delete.is_none());
+    }
+
+    #[test]
+    fn test_delete_session_not_found() {
+        let (session_service, _) = create_test_services();
+
+        let result = session_service.delete(9999);
+
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            SessionServiceError::NotFound(9999)
+        ));
     }
 }
