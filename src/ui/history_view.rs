@@ -150,11 +150,10 @@ impl HistoryView {
                     event::read().map_err(|e| HistoryViewError::Terminal(e.to_string()))?
                 {
                     match (key.modifiers, key.code) {
-                        (KeyModifiers::CONTROL, KeyCode::Char('c'))
-                        | (_, KeyCode::Char('q') | KeyCode::Char('Q')) => {
+                        (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
                             return Ok(HistoryViewResult::Done);
                         }
-                        (_, KeyCode::Esc) => {
+                        (_, KeyCode::Esc) | (_, KeyCode::Char('q') | KeyCode::Char('Q')) => {
                             return Ok(HistoryViewResult::Back);
                         }
                         (_, KeyCode::Up) => {
@@ -353,9 +352,9 @@ impl HistoryView {
             Span::raw(" Month  "),
             Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
             Span::raw(" Scroll  "),
-            Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
+            Span::styled("[Q/Esc]", Style::default().fg(Color::Yellow)),
             Span::raw(" Back  "),
-            Span::styled("[Q]", Style::default().fg(Color::Yellow)),
+            Span::styled("[Ctrl+C]", Style::default().fg(Color::Yellow)),
             Span::raw(" Quit"),
         ]))
         .block(Block::default().borders(Borders::ALL));
