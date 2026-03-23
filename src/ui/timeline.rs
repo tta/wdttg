@@ -1,6 +1,6 @@
 use crate::models::EmQuadrant;
 use crate::services::TimeBlock;
-use chrono::{NaiveDate, Timelike};
+use chrono::{Local, NaiveDate, TimeZone, Timelike};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
@@ -214,7 +214,8 @@ impl TimelineView {
             .blocks
             .iter()
             .filter(|b| {
-                let block_start_hour = b.start.hour();
+                let local_start = Local.from_utc_datetime(&b.start.naive_utc());
+                let block_start_hour = local_start.hour();
                 block_start_hour < end_hour && block_start_hour >= start_hour
             })
             .collect();
@@ -262,7 +263,9 @@ impl TimelineView {
     }
 
     fn render_24h_bar(&self, width: usize) -> Vec<Span<'static>> {
-        let mins_per_char = (24.0 * 60.0) / width as f64;
+        let (start_hour, end_hour) = self.zoom.time_range();
+        let total_hours = (end_hour - start_hour) as f64;
+        let mins_per_char = (total_hours * 60.0) / width as f64;
         let mut positions: Vec<Option<(Color, char)>> = vec![None; width];
 
         for block in &self.blocks {
@@ -276,13 +279,25 @@ impl TimelineView {
             };
             let color = quadrant_color(quadrant);
 
-            let start_mins = block.start.hour() as f64 * 60.0 + block.start.minute() as f64;
-            let end_mins = block
-                .end
-                .map_or(24.0 * 60.0, |e| e.hour() as f64 * 60.0 + e.minute() as f64);
+            let local_start = Local.from_utc_datetime(&block.start.naive_utc());
+            let local_end = block.end.map(|e| Local.from_utc_datetime(&e.naive_utc()));
 
-            let start_idx = (start_mins / mins_per_char) as usize;
-            let end_idx = ((end_mins / mins_per_char) as usize).min(width);
+            let block_start_mins = local_start.hour() as f64 * 60.0 + local_start.minute() as f64;
+            let block_end_mins =
+                local_end.map_or(24.0 * 60.0, |e| e.hour() as f64 * 60.0 + e.minute() as f64);
+
+            let zoom_start_mins = start_hour as f64 * 60.0;
+            let zoom_end_mins = end_hour as f64 * 60.0;
+
+            if block_end_mins <= zoom_start_mins || block_start_mins >= zoom_end_mins {
+                continue;
+            }
+
+            let visible_start = (block_start_mins - zoom_start_mins).max(0.0);
+            let visible_end = (block_end_mins - zoom_start_mins).min(total_hours * 60.0);
+
+            let start_idx = (visible_start / mins_per_char) as usize;
+            let end_idx = ((visible_end / mins_per_char) as usize).min(width);
 
             for pos in &mut positions[start_idx..end_idx] {
                 *pos = Some((color, '█'));
@@ -335,11 +350,14 @@ impl TimelineView {
     }
 
     fn render_hour_markers(&self, width: usize) -> String {
-        let hours = [0, 4, 8, 12, 16, 20, 24];
+        let (start_hour, end_hour) = self.zoom.time_range();
+        let total_hours = (end_hour - start_hour) as f64;
         let mut result = vec![' '; width];
 
-        for &hour in &hours {
-            let pos = ((hour as f64 / 24.0) * width as f64) as usize;
+        let hour_step = if total_hours <= 6.0 { 1 } else { 2 };
+        let mut hour = start_hour;
+        while hour <= end_hour {
+            let pos = (((hour - start_hour) as f64 / total_hours) * width as f64) as usize;
             let label = hour.to_string();
             let start = pos.min(width.saturating_sub(label.len()));
             for (i, ch) in label.chars().enumerate() {
@@ -347,6 +365,7 @@ impl TimelineView {
                     result[start + i] = ch;
                 }
             }
+            hour += hour_step;
         }
 
         result.into_iter().collect()
@@ -355,7 +374,8 @@ impl TimelineView {
     fn render_session_line(&self, block: &TimeBlock) -> Option<Line<'static>> {
         let task = block.task.as_ref()?;
         let duration_str = format_duration(block.duration_seconds()?);
-        let time_str = block.start.format("%H:%M").to_string();
+        let local_start = Local.from_utc_datetime(&block.start.naive_utc());
+        let time_str = local_start.format("%H:%M").to_string();
         let em_tag = task.em_quadrant().tag().to_string();
         let color = quadrant_color(&block.quadrant?);
         let name = task.name.clone();
@@ -448,7 +468,8 @@ pub fn print_timeline_static(blocks: &[TimeBlock], date: NaiveDate) {
     } else {
         for block in &session_blocks {
             if let Some(task) = &block.task {
-                let time_str = block.start.format("%H:%M");
+                let local_start = Local.from_utc_datetime(&block.start.naive_utc());
+                let time_str = local_start.format("%H:%M");
                 let duration_str = block
                     .duration_seconds()
                     .map(format_duration)
@@ -478,10 +499,12 @@ fn print_24h_bar_static(blocks: &[TimeBlock], width: usize) {
             continue;
         }
 
-        let start_mins = block.start.hour() as f64 * 60.0 + block.start.minute() as f64;
-        let end_mins = block
-            .end
-            .map_or(24.0 * 60.0, |e| e.hour() as f64 * 60.0 + e.minute() as f64);
+        let local_start = Local.from_utc_datetime(&block.start.naive_utc());
+        let local_end = block.end.map(|e| Local.from_utc_datetime(&e.naive_utc()));
+
+        let start_mins = local_start.hour() as f64 * 60.0 + local_start.minute() as f64;
+        let end_mins =
+            local_end.map_or(24.0 * 60.0, |e| e.hour() as f64 * 60.0 + e.minute() as f64);
 
         let start_idx = (start_mins / mins_per_char) as usize;
         let end_idx = ((end_mins / mins_per_char) as usize).min(width);
