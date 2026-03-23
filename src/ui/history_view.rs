@@ -171,7 +171,7 @@ impl HistoryView {
                         (_, KeyCode::Char('k')) => {
                             self.select_prev_session();
                         }
-                        (_, KeyCode::Char('e') | KeyCode::Char('E')) => {
+                        (_, KeyCode::Enter) => {
                             if let Some(session) = self.sessions.get(self.selected_session_idx) {
                                 return Ok(HistoryViewResult::EditSession(session.session.id));
                             }
@@ -371,7 +371,7 @@ impl HistoryView {
             Span::raw(" Month  "),
             Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
             Span::raw(" Select  "),
-            Span::styled("[E]", Style::default().fg(Color::Yellow)),
+            Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
             Span::raw(" Edit  "),
             Span::styled("[Q/Esc]", Style::default().fg(Color::Yellow)),
             Span::raw(" Back"),

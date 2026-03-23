@@ -172,7 +172,7 @@ impl EditForm {
                     }
                 } else {
                     match (key.modifiers, key.code) {
-                        (_, KeyCode::Esc) => {
+                        (_, KeyCode::Esc) | (_, KeyCode::Char('q') | KeyCode::Char('Q')) => {
                             return Ok(EditFormResult::Cancelled);
                         }
                         (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
@@ -184,7 +184,7 @@ impl EditForm {
                         (_, KeyCode::Char('k')) => {
                             self.move_field(-1);
                         }
-                        (_, KeyCode::Enter) => {
+                        (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
                             return Ok(EditFormResult::Saved(Task {
                                 id: self.task.id,
                                 name: self.task.name.clone(),
@@ -208,7 +208,7 @@ impl EditForm {
                         (_, KeyCode::Down) => {
                             self.move_field(1);
                         }
-                        (_, KeyCode::Char(' ')) | (_, KeyCode::Right) => {
+                        (_, KeyCode::Enter) | (_, KeyCode::Char(' ')) | (_, KeyCode::Right) => {
                             self.edit_current_field();
                         }
                         (_, KeyCode::Left) => {
@@ -399,7 +399,7 @@ impl EditForm {
         let help_text = if self.editing_text {
             "Enter: confirm | Esc: cancel | Ctrl+W: delete word"
         } else {
-            "↑↓/j/k: navigate | Space/→: edit field | ←: cycle options | Enter: save | Esc: cancel"
+            "↑↓/j/k: navigate | Enter/Space: edit | ←: cycle | Ctrl+S: save | q/Esc: back"
         };
 
         let help = Paragraph::new(Line::from(vec![Span::styled(

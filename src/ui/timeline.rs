@@ -161,7 +161,7 @@ impl TimelineView {
                         | (_, KeyCode::Char('q') | KeyCode::Char('Q')) => {
                             return Ok(TimelineResult::Cancelled);
                         }
-                        (_, KeyCode::Char('e') | KeyCode::Char('E')) => {
+                        (_, KeyCode::Enter) => {
                             if let Some((_, session_id)) = self.get_selected_session() {
                                 return Ok(TimelineResult::EditSession(session_id));
                             }
@@ -459,7 +459,7 @@ impl TimelineView {
         let paragraph = Paragraph::new(Line::from(vec![
             Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
             Span::raw(" Select  "),
-            Span::styled("[E]", Style::default().fg(Color::Yellow)),
+            Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
             Span::raw(" Edit  "),
             Span::styled("[1-3/A]", Style::default().fg(Color::Yellow)),
             Span::raw(" Zoom  "),

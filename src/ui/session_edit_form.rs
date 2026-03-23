@@ -151,7 +151,7 @@ impl SessionEditForm {
                     }
                 } else {
                     match (key.modifiers, key.code) {
-                        (_, KeyCode::Esc) => {
+                        (_, KeyCode::Esc) | (_, KeyCode::Char('q') | KeyCode::Char('Q')) => {
                             return Ok(SessionEditResult::Cancelled);
                         }
                         (KeyModifiers::CONTROL, KeyCode::Char('c')) => {
@@ -166,19 +166,19 @@ impl SessionEditForm {
                         (_, KeyCode::Char('k')) => {
                             self.move_field(-1);
                         }
-                        (_, KeyCode::Enter) => {
-                            if let Some(result) = self.validate_and_save() {
-                                return Ok(result);
-                            }
-                        }
                         (_, KeyCode::Up) => {
                             self.move_field(-1);
                         }
                         (_, KeyCode::Down) => {
                             self.move_field(1);
                         }
-                        (_, KeyCode::Char(' ')) | (_, KeyCode::Right) => {
+                        (_, KeyCode::Enter) | (_, KeyCode::Char(' ')) | (_, KeyCode::Right) => {
                             self.edit_current_field();
+                        }
+                        (KeyModifiers::CONTROL, KeyCode::Char('s')) => {
+                            if let Some(result) = self.validate_and_save() {
+                                return Ok(result);
+                            }
                         }
                         _ => {}
                     }
@@ -411,7 +411,7 @@ impl SessionEditForm {
         let help_text = if self.editing_text {
             "Enter: confirm | Esc: cancel | Ctrl+W: delete word"
         } else {
-            "↑↓/j/k: navigate | Space/→: edit | Enter: save | Ctrl+D: delete | Esc: cancel"
+            "↑↓/j/k: navigate | Enter/Space: edit | Ctrl+S: save | Ctrl+D: delete | q/Esc: back"
         };
 
         let help = Paragraph::new(Line::from(vec![Span::styled(
