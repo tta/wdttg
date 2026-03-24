@@ -878,8 +878,8 @@ mod tests {
 
         session_service.log_session(task.id, start, end).unwrap();
 
-        let today = Utc::now().date_naive();
-        let sessions = session_service.get_date_range(today, today).unwrap();
+        let date = start.date_naive();
+        let sessions = session_service.get_date_range(date, date).unwrap();
 
         assert_eq!(sessions.len(), 1);
         assert_eq!(sessions[0].task.name, "test-task");
@@ -897,8 +897,8 @@ mod tests {
 
         session_service.log_session(task.id, start, end).unwrap();
 
-        let today = Utc::now().date_naive();
-        let quadrant_times = session_service.get_quadrant_time(today, today).unwrap();
+        let date = start.date_naive();
+        let quadrant_times = session_service.get_quadrant_time(date, date).unwrap();
 
         assert_eq!(quadrant_times.len(), 1);
         assert_eq!(quadrant_times[0].total_seconds, 3600);
@@ -915,8 +915,8 @@ mod tests {
 
         session_service.log_session(task.id, start, end).unwrap();
 
-        let today = Utc::now().date_naive();
-        let task_times = session_service.get_task_time(today, today).unwrap();
+        let date = start.date_naive();
+        let task_times = session_service.get_task_time(date, date).unwrap();
 
         assert_eq!(task_times.len(), 1);
         assert_eq!(task_times[0].task_name, "test-task");
@@ -935,8 +935,8 @@ mod tests {
 
         session_service.log_session(task.id, start, end).unwrap();
 
-        let today = Utc::now().date_naive();
-        let tag_times = session_service.get_tag_time(today, today).unwrap();
+        let date = start.date_naive();
+        let tag_times = session_service.get_tag_time(date, date).unwrap();
 
         assert!(!tag_times.is_empty());
         let tag_names: Vec<&str> = tag_times.iter().map(|t| t.tag.as_str()).collect();
@@ -955,8 +955,8 @@ mod tests {
 
         session_service.log_session(task.id, start, end).unwrap();
 
-        let today = Utc::now().date_naive();
-        let tags_with_time = session_service.get_tags_with_time(today, today).unwrap();
+        let date = start.date_naive();
+        let tags_with_time = session_service.get_tags_with_time(date, date).unwrap();
 
         assert!(!tags_with_time.is_empty());
         let coding_tag = tags_with_time.iter().find(|t| t.tag == "coding");
@@ -982,16 +982,16 @@ mod tests {
         let end2 = Utc::now() - chrono::Duration::hours(3);
         session_service.log_session(task2.id, start2, end2).unwrap();
 
-        let today = Utc::now().date_naive();
+        let date = start.date_naive();
         let coding_sessions = session_service
-            .get_sessions_by_tag("coding", today, today)
+            .get_sessions_by_tag("coding", date, date)
             .unwrap();
 
         assert_eq!(coding_sessions.len(), 1);
         assert!(coding_sessions[0].task.name.contains("coding"));
 
         let meeting_sessions = session_service
-            .get_sessions_by_tag("meeting", today, today)
+            .get_sessions_by_tag("meeting", date, date)
             .unwrap();
         assert_eq!(meeting_sessions.len(), 1);
         assert!(meeting_sessions[0].task.name.contains("meeting"));
