@@ -1,6 +1,6 @@
 use crate::db::Database;
 use crate::models::{Session, SessionWithTask, Task, TaskStatus};
-use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use rusqlite::{params, OptionalExtension};
 use std::sync::Arc;
 use thiserror::Error;

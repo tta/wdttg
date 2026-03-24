@@ -8,7 +8,7 @@ use wdttg::ui::{
 };
 use wdttg::{
     cli, parse_date, parse_period, parse_relative_time, Commands, Database, EmQuadrant,
-    SessionService, TaskService,
+    SessionService, Task, TaskService,
 };
 
 fn format_duration(duration: chrono::Duration) -> String {
@@ -529,19 +529,21 @@ fn handle_log(
     let task_service = TaskService::new(Arc::clone(db));
     let session_service = SessionService::new(Arc::clone(db));
 
-    let (task, is_new_task) = if let Some(task_name) = task {
+    enum TaskSelection {
+        Existing(Task),
+        NewTask { name: String },
+    }
+
+    let selection = if let Some(task_name) = task {
         if !task_name.is_empty() {
             match task_service
                 .get_by_name(task_name)
                 .map_err(|e| e.to_string())?
             {
-                Some(existing) => (existing, false),
-                None => {
-                    let created = task_service
-                        .get_or_create(task_name)
-                        .map_err(|e| e.to_string())?;
-                    (created, true)
-                }
+                Some(existing) => TaskSelection::Existing(existing),
+                None => TaskSelection::NewTask {
+                    name: task_name.to_string(),
+                },
             }
         } else if is_interactive() && !no_prompt {
             let tasks = task_service
@@ -549,13 +551,8 @@ fn handle_log(
                 .map_err(|e| e.to_string())?;
             let picker = TaskPicker::new(tasks);
             match picker.run().map_err(|e| e.to_string())? {
-                PickerResult::Selected(t) => (t, false),
-                PickerResult::CreateNew(name) => {
-                    let created = task_service
-                        .get_or_create(&name)
-                        .map_err(|e| e.to_string())?;
-                    (created, true)
-                }
+                PickerResult::Selected(t) => TaskSelection::Existing(t),
+                PickerResult::CreateNew(name) => TaskSelection::NewTask { name },
                 PickerResult::Cancelled => {
                     println!("Cancelled.");
                     return Ok(());
@@ -570,13 +567,8 @@ fn handle_log(
             .map_err(|e| e.to_string())?;
         let picker = TaskPicker::new(tasks);
         match picker.run().map_err(|e| e.to_string())? {
-            PickerResult::Selected(t) => (t, false),
-            PickerResult::CreateNew(name) => {
-                let created = task_service
-                    .get_or_create(&name)
-                    .map_err(|e| e.to_string())?;
-                (created, true)
-            }
+            PickerResult::Selected(t) => TaskSelection::Existing(t),
+            PickerResult::CreateNew(name) => TaskSelection::NewTask { name },
             PickerResult::Cancelled => {
                 println!("Cancelled.");
                 return Ok(());
@@ -586,8 +578,10 @@ fn handle_log(
         return Err("Task name required in non-interactive mode".to_string());
     };
 
-    if is_new_task {
-        let quadrant = if let Some(em_str) = em_arg {
+    let needs_em = matches!(selection, TaskSelection::NewTask { .. });
+
+    let quadrant = if needs_em {
+        Some(if let Some(em_str) = em_arg {
             parse_em_arg(em_str)?
         } else if is_interactive() && !no_prompt {
             match prompt_em_quadrant() {
@@ -599,12 +593,10 @@ fn handle_log(
             }
         } else {
             return Err("EM quadrant required for new tasks. Use --em 00|01|10|11".to_string());
-        };
-
-        task_service
-            .set_em_quadrant(task.id, quadrant.is_urgent(), quadrant.is_important())
-            .map_err(|e| e.to_string())?;
-    }
+        })
+    } else {
+        None
+    };
 
     let now = chrono::Utc::now();
 
@@ -646,6 +638,21 @@ fn handle_log(
     if end > now {
         return Err("End time cannot be in the future".to_string());
     }
+
+    let task = match selection {
+        TaskSelection::Existing(t) => t,
+        TaskSelection::NewTask { name } => {
+            let created = task_service
+                .get_or_create(&name)
+                .map_err(|e| e.to_string())?;
+            if let Some(q) = quadrant {
+                task_service
+                    .set_em_quadrant(created.id, q.is_urgent(), q.is_important())
+                    .map_err(|e| e.to_string())?;
+            }
+            created
+        }
+    };
 
     let session = session_service
         .log_session(task.id, start, end)
