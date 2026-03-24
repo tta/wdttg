@@ -46,7 +46,7 @@ cargo clippy
 ### Install
 
 ```bash
-cargo install --path=. --root=~/.local/
+cargo install --path=. --root=${HOME}/.local/
 ```
 
 ### Run with test database
