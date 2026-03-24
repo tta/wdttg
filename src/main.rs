@@ -143,23 +143,25 @@ fn handle_start(
         return Err("Task name required in non-interactive mode".to_string());
     };
 
-    if is_new_task {
-        let quadrant = if let Some(em_str) = em_arg {
-            parse_em_arg(em_str)?
-        } else if is_interactive() && !no_prompt {
-            match prompt_em_quadrant() {
-                Some(q) => q,
-                None => {
-                    println!("Cancelled.");
-                    return Ok(());
-                }
+    let quadrant = if let Some(em_str) = em_arg {
+        Some(parse_em_arg(em_str)?)
+    } else if is_new_task && is_interactive() && !no_prompt {
+        match prompt_em_quadrant() {
+            Some(q) => Some(q),
+            None => {
+                println!("Cancelled.");
+                return Ok(());
             }
-        } else {
-            return Err("EM quadrant required for new tasks. Use --em 00|01|10|11".to_string());
-        };
+        }
+    } else if is_new_task {
+        return Err("EM quadrant required for new tasks. Use --em 00|01|10|11".to_string());
+    } else {
+        None
+    };
 
+    if let Some(q) = quadrant {
         task_service
-            .set_em_quadrant(task.id, quadrant.is_urgent(), quadrant.is_important())
+            .set_em_quadrant(task.id, q.is_urgent(), q.is_important())
             .map_err(|e| e.to_string())?;
     }
 
