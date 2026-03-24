@@ -90,6 +90,7 @@ pub struct EditForm {
     current_field: Field,
     editing_text: bool,
     text_buffer: String,
+    cursor_pos: usize,
     em_index: usize,
     status_index: usize,
     pending_cancel: bool,
@@ -114,6 +115,7 @@ impl EditForm {
             current_field: Field::Name,
             editing_text: false,
             text_buffer: String::new(),
+            cursor_pos: 0,
             em_index,
             status_index,
             pending_cancel: false,
@@ -186,10 +188,39 @@ impl EditForm {
                             self.delete_prev_word();
                         }
                         (_, KeyCode::Char(c)) => {
-                            self.text_buffer.push(c);
+                            self.text_buffer.insert(self.cursor_pos, c);
+                            self.cursor_pos += c.len_utf8();
                         }
                         (_, KeyCode::Backspace) => {
-                            self.text_buffer.pop();
+                            if self.cursor_pos > 0 {
+                                let prev_char_len = self.text_buffer[..self.cursor_pos]
+                                    .chars()
+                                    .last()
+                                    .map(|c| c.len_utf8())
+                                    .unwrap_or(0);
+                                self.cursor_pos -= prev_char_len;
+                                self.text_buffer.remove(self.cursor_pos);
+                            }
+                        }
+                        (_, KeyCode::Left) => {
+                            if self.cursor_pos > 0 {
+                                let prev_char_len = self.text_buffer[..self.cursor_pos]
+                                    .chars()
+                                    .last()
+                                    .map(|c| c.len_utf8())
+                                    .unwrap_or(0);
+                                self.cursor_pos -= prev_char_len;
+                            }
+                        }
+                        (_, KeyCode::Right) => {
+                            if self.cursor_pos < self.text_buffer.len() {
+                                let next_char_len = self.text_buffer[self.cursor_pos..]
+                                    .chars()
+                                    .next()
+                                    .map(|c| c.len_utf8())
+                                    .unwrap_or(0);
+                                self.cursor_pos += next_char_len;
+                            }
                         }
                         _ => {}
                     }
@@ -261,10 +292,12 @@ impl EditForm {
         match self.current_field {
             Field::Name => {
                 self.text_buffer = self.task.name.clone();
+                self.cursor_pos = self.text_buffer.len();
                 self.editing_text = true;
             }
             Field::Notes => {
                 self.text_buffer = self.task.notes.clone();
+                self.cursor_pos = self.text_buffer.len();
                 self.editing_text = true;
             }
             Field::EmQuadrant => {
@@ -313,11 +346,14 @@ impl EditForm {
     }
 
     fn delete_prev_word(&mut self) {
-        let trimmed = self.text_buffer.trim_end_matches(' ');
-        if let Some(pos) = trimmed.rfind(' ') {
-            self.text_buffer.truncate(pos);
+        let before_cursor = self.text_buffer[..self.cursor_pos].trim_end_matches(' ');
+        if let Some(pos) = before_cursor.rfind(' ') {
+            let delete_len = self.cursor_pos - (pos + 1);
+            self.text_buffer.drain((pos + 1)..self.cursor_pos);
+            self.cursor_pos -= delete_len;
         } else {
-            self.text_buffer.clear();
+            self.text_buffer.drain(0..self.cursor_pos);
+            self.cursor_pos = 0;
         }
     }
 
@@ -396,7 +432,9 @@ impl EditForm {
                 };
 
                 let display_value = if is_editing {
-                    format!("{}_", self.text_buffer)
+                    let before: String = self.text_buffer.chars().take(self.cursor_pos).collect();
+                    let after: String = self.text_buffer.chars().skip(self.cursor_pos).collect();
+                    format!("{}|{}", before, after)
                 } else {
                     value
                 };
@@ -451,7 +489,7 @@ impl EditForm {
 
     fn render_help(&self, f: &mut Frame, area: Rect) {
         let help_text = if self.editing_text {
-            "Enter: confirm | Esc: cancel | Ctrl+W: delete word"
+            "Enter: confirm | Esc: cancel | ←→: move | Ctrl+W: delete word"
         } else {
             "↑↓/j/k: navigate | Enter/Space: edit | ←: cycle | s: save | q/Esc: back"
         };
