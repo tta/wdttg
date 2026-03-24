@@ -1,0 +1,93 @@
+use std::io::Write;
+use std::process::Command;
+
+pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
+    let result = if cfg!(target_os = "macos") {
+        Command::new("pbcopy")
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .and_then(|mut child| {
+                if let Some(stdin) = child.stdin.as_mut() {
+                    stdin.write_all(text.as_bytes())?;
+                }
+                child.wait()
+            })
+    } else if cfg!(target_os = "linux") {
+        Command::new("xclip")
+            .args(["-selection", "clipboard"])
+            .stdin(std::process::Stdio::piped())
+            .spawn()
+            .and_then(|mut child| {
+                if let Some(stdin) = child.stdin.as_mut() {
+                    stdin.write_all(text.as_bytes())?;
+                }
+                child.wait()
+            })
+    } else {
+        return Err("Unsupported platform for clipboard".to_string());
+    };
+
+    result.map_err(|e| format!("Failed to copy to clipboard: {}", e))?;
+    Ok(())
+}
+
+pub fn resolve_note_path(note: &str) -> Option<String> {
+    let vault = std::env::var("WDTTG_VAULT").ok()?;
+
+    let note = note.trim_start_matches("[[").trim_end_matches("]]");
+    let file = note.split('#').next()?;
+
+    let file = if file.ends_with(".md") {
+        file.to_string()
+    } else {
+        format!("{}.md", file)
+    };
+
+    Some(format!("{}/{}", vault, file))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Mutex;
+
+    static VAULT_LOCK: Mutex<()> = Mutex::new(());
+
+    #[test]
+    fn test_resolve_note_path_simple() {
+        let _lock = VAULT_LOCK.lock().unwrap();
+        std::env::set_var("WDTTG_VAULT", "/test/vault");
+        let result = resolve_note_path("[[daily/2026-03-24]]");
+        assert_eq!(result, Some("/test/vault/daily/2026-03-24.md".to_string()));
+        std::env::remove_var("WDTTG_VAULT");
+    }
+
+    #[test]
+    fn test_resolve_note_path_with_section() {
+        let _lock = VAULT_LOCK.lock().unwrap();
+        std::env::set_var("WDTTG_VAULT", "/test/vault");
+        let result = resolve_note_path("[[projects/feature-x#Implementation]]");
+        assert_eq!(
+            result,
+            Some("/test/vault/projects/feature-x.md".to_string())
+        );
+        std::env::remove_var("WDTTG_VAULT");
+    }
+
+    #[test]
+    fn test_resolve_note_path_with_md_extension() {
+        let _lock = VAULT_LOCK.lock().unwrap();
+        std::env::set_var("WDTTG_VAULT", "/test/vault");
+        let result = resolve_note_path("[[notes/meeting.md]]");
+        assert_eq!(result, Some("/test/vault/notes/meeting.md".to_string()));
+        std::env::remove_var("WDTTG_VAULT");
+    }
+
+    #[test]
+    fn test_resolve_note_path_no_vault() {
+        let _lock = VAULT_LOCK.lock().unwrap();
+        std::env::remove_var("WDTTG_VAULT");
+        let result = resolve_note_path("[[daily/2026-03-24]]");
+        assert_eq!(result, None);
+    }
+}

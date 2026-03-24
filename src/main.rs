@@ -74,6 +74,7 @@ fn prompt_em_quadrant() -> Option<EmQuadrant> {
 fn handle_start(
     query: Option<&str>,
     em_arg: Option<&str>,
+    note_arg: Option<&str>,
     no_prompt: bool,
     db: &Arc<Database>,
 ) -> Result<(), String> {
@@ -157,7 +158,9 @@ fn handle_start(
             .map_err(|e| e.to_string())?;
     }
 
-    let session = session_service.start(task.id).map_err(|e| e.to_string())?;
+    let session = session_service
+        .start(task.id, note_arg)
+        .map_err(|e| e.to_string())?;
 
     let updated_task = task_service.get_by_id(task.id).unwrap().unwrap();
     let em_tag = updated_task.em_quadrant().tag();
@@ -523,6 +526,7 @@ fn handle_log(
     start_arg: Option<&str>,
     end_arg: Option<&str>,
     em_arg: Option<&str>,
+    note_arg: Option<&str>,
     no_prompt: bool,
     db: &Arc<Database>,
 ) -> Result<(), String> {
@@ -655,7 +659,7 @@ fn handle_log(
     };
 
     let session = session_service
-        .log_session(task.id, start, end)
+        .log_session(task.id, start, end, note_arg)
         .map_err(|e| e.to_string())?;
 
     let duration = end - start;
@@ -1045,9 +1049,13 @@ fn main() {
     };
 
     let result = match cli.command {
-        Commands::Start { query, em } => {
-            handle_start(query.as_deref(), em.as_deref(), cli.no_prompt, &db)
-        }
+        Commands::Start { query, em, note } => handle_start(
+            query.as_deref(),
+            em.as_deref(),
+            note.as_deref(),
+            cli.no_prompt,
+            &db,
+        ),
         Commands::Stop => handle_stop(&db),
         Commands::Status => handle_status(&db),
         Commands::Done => handle_done(&db),
@@ -1075,11 +1083,13 @@ fn main() {
             start,
             end,
             em,
+            note,
         } => handle_log(
             task.as_deref(),
             start.as_deref(),
             end.as_deref(),
             em.as_deref(),
+            note.as_deref(),
             cli.no_prompt,
             &db,
         ),

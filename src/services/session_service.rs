@@ -26,6 +26,7 @@ pub struct TimeBlock {
     pub end: Option<DateTime<Utc>>,
     pub task: Option<Task>,
     pub quadrant: Option<crate::models::EmQuadrant>,
+    pub note: Option<String>,
 }
 
 impl TimeBlock {
@@ -47,7 +48,7 @@ impl SessionService {
         Self { db }
     }
 
-    pub fn start(&self, task_id: i64) -> Result<Session> {
+    pub fn start(&self, task_id: i64, note: Option<&str>) -> Result<Session> {
         let conn = self.db.connection();
 
         let tx = conn.unchecked_transaction()?;
@@ -58,8 +59,8 @@ impl SessionService {
         )?;
 
         conn.execute(
-            "INSERT INTO sessions (task_id, start_time) VALUES (?1, datetime('now'))",
-            params![task_id],
+            "INSERT INTO sessions (task_id, start_time, note) VALUES (?1, datetime('now'), ?2)",
+            params![task_id, note],
         )?;
 
         let id = conn.last_insert_rowid();
@@ -100,7 +101,7 @@ impl SessionService {
         let conn = self.db.connection();
 
         let result = conn.query_row(
-            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.created_at,
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.note, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -189,7 +190,7 @@ impl SessionService {
         let conn = self.db.connection();
 
         let result = conn.query_row(
-            "SELECT id, task_id, start_time, end_time, notes, created_at FROM sessions WHERE id = ?1",
+            "SELECT id, task_id, start_time, end_time, notes, note, created_at FROM sessions WHERE id = ?1",
             params![id],
             |row| self.row_to_session(row),
         );
@@ -223,7 +224,7 @@ impl SessionService {
         let end_of_day = format_sqlite_datetime(&end_utc);
 
         let mut stmt = conn.prepare(
-            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.created_at,
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.note, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -283,6 +284,7 @@ impl SessionService {
                         end: Some(swt.session.start_time),
                         task: None,
                         quadrant: None,
+                        note: None,
                     });
                 }
             } else if swt.session.start_time > start_of_day {
@@ -292,6 +294,7 @@ impl SessionService {
                     end: Some(swt.session.start_time),
                     task: None,
                     quadrant: None,
+                    note: None,
                 });
             }
 
@@ -302,6 +305,7 @@ impl SessionService {
                 end: Some(session_end),
                 task: Some(swt.task),
                 quadrant: Some(quadrant),
+                note: swt.session.note.clone(),
             });
 
             last_end = Some(session_end);
@@ -315,6 +319,7 @@ impl SessionService {
                     end: Some(end_of_day),
                     task: None,
                     quadrant: None,
+                    note: None,
                 });
             }
         }
@@ -326,7 +331,7 @@ impl SessionService {
         let conn = self.db.connection();
 
         let mut stmt = conn.prepare(
-            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.created_at,
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.note, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -345,7 +350,7 @@ impl SessionService {
         let conn = self.db.connection();
 
         let result = conn.query_row(
-            "SELECT id, task_id, start_time, end_time, notes, created_at 
+            "SELECT id, task_id, start_time, end_time, notes, note, created_at 
              FROM sessions 
              WHERE task_id = ?1 
              ORDER BY start_time DESC 
@@ -365,7 +370,7 @@ impl SessionService {
         let conn = self.db.connection();
 
         let result = conn.query_row(
-            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.created_at,
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.note, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -387,6 +392,7 @@ impl SessionService {
         task_id: i64,
         start: DateTime<Utc>,
         end: DateTime<Utc>,
+        note: Option<&str>,
     ) -> Result<Session> {
         let conn = self.db.connection();
 
@@ -394,8 +400,8 @@ impl SessionService {
         let end_str = format_sqlite_datetime(&end);
 
         conn.execute(
-            "INSERT INTO sessions (task_id, start_time, end_time) VALUES (?1, ?2, ?3)",
-            params![task_id, start_str, end_str],
+            "INSERT INTO sessions (task_id, start_time, end_time, note) VALUES (?1, ?2, ?3, ?4)",
+            params![task_id, start_str, end_str, note],
         )?;
 
         let id = conn.last_insert_rowid();
@@ -412,7 +418,7 @@ impl SessionService {
         let end_str = format!("{} 23:59:59", end.format("%Y-%m-%d"));
 
         let mut stmt = conn.prepare(
-            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.created_at,
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.note, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -580,7 +586,7 @@ impl SessionService {
         let end_str = format!("{} 23:59:59", end.format("%Y-%m-%d"));
 
         let mut stmt = conn.prepare(
-            "SELECT DISTINCT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.created_at,
+            "SELECT DISTINCT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.note, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -605,7 +611,8 @@ impl SessionService {
         let start_time_str: String = row.get(2)?;
         let end_time_str: Option<String> = row.get(3)?;
         let notes: Option<String> = row.get(4)?;
-        let created_at_str: String = row.get(5)?;
+        let note: Option<String> = row.get(5)?;
+        let created_at_str: String = row.get(6)?;
 
         let start_time = parse_sqlite_datetime(&start_time_str)?;
         let end_time = end_time_str
@@ -619,6 +626,7 @@ impl SessionService {
             start_time,
             end_time,
             notes,
+            note,
             created_at,
         })
     }
@@ -629,19 +637,19 @@ impl SessionService {
     ) -> std::result::Result<SessionWithTask, rusqlite::Error> {
         let session = self.row_to_session(row)?;
 
-        let task_id: i64 = row.get(6)?;
-        let task_name: String = row.get(7)?;
-        let task_notes: Option<String> = row.get(8)?;
-        let em_urgent: i32 = row.get(9)?;
-        let em_important: i32 = row.get(10)?;
-        let status_str: String = row.get(11)?;
-        let recurring: i32 = row.get(12)?;
-        let task_created_at_str: String = row.get(13)?;
-        let task_updated_at_str: String = row.get(14)?;
+        let task_id: i64 = row.get(7)?;
+        let task_name: String = row.get(8)?;
+        let task_notes: Option<String> = row.get(9)?;
+        let em_urgent: i32 = row.get(10)?;
+        let em_important: i32 = row.get(11)?;
+        let status_str: String = row.get(12)?;
+        let recurring: i32 = row.get(13)?;
+        let task_created_at_str: String = row.get(14)?;
+        let task_updated_at_str: String = row.get(15)?;
 
         let status: TaskStatus = status_str.parse().map_err(|_| {
             rusqlite::Error::InvalidColumnType(
-                11,
+                12,
                 "status".to_string(),
                 rusqlite::types::Type::Text,
             )
@@ -700,7 +708,7 @@ mod tests {
         let (session_service, task_service) = create_test_services();
 
         let task = task_service.get_or_create("test-task").unwrap();
-        let session = session_service.start(task.id).unwrap();
+        let session = session_service.start(task.id, None).unwrap();
 
         assert!(session.end_time.is_none());
         assert_eq!(session.task_id, task.id);
@@ -713,10 +721,10 @@ mod tests {
         let task1 = task_service.get_or_create("task-1").unwrap();
         let task2 = task_service.get_or_create("task-2").unwrap();
 
-        let session1 = session_service.start(task1.id).unwrap();
+        let session1 = session_service.start(task1.id, None).unwrap();
         assert!(session1.end_time.is_none());
 
-        let _session2 = session_service.start(task2.id).unwrap();
+        let _session2 = session_service.start(task2.id, None).unwrap();
 
         let session1_after = session_service.get_by_id(session1.id).unwrap().unwrap();
         assert!(session1_after.end_time.is_some());
@@ -727,7 +735,7 @@ mod tests {
         let (session_service, task_service) = create_test_services();
 
         let task = task_service.get_or_create("test-task").unwrap();
-        session_service.start(task.id).unwrap();
+        session_service.start(task.id, None).unwrap();
 
         let stopped = session_service.stop().unwrap();
         assert!(stopped.is_some());
@@ -747,7 +755,7 @@ mod tests {
         let (session_service, task_service) = create_test_services();
 
         let task = task_service.get_or_create("test-task").unwrap();
-        session_service.start(task.id).unwrap();
+        session_service.start(task.id, None).unwrap();
 
         let active = session_service.get_active().unwrap();
         assert!(active.is_some());
@@ -762,7 +770,7 @@ mod tests {
         let (session_service, task_service) = create_test_services();
 
         let task = task_service.get_or_create("test-task").unwrap();
-        session_service.start(task.id).unwrap();
+        session_service.start(task.id, None).unwrap();
         session_service.stop().unwrap();
 
         let active = session_service.get_active().unwrap();
@@ -777,9 +785,9 @@ mod tests {
         let task2 = task_service.get_or_create("task-2").unwrap();
         let task3 = task_service.get_or_create("task-3").unwrap();
 
-        session_service.start(task1.id).unwrap();
-        session_service.start(task2.id).unwrap();
-        session_service.start(task3.id).unwrap();
+        session_service.start(task1.id, None).unwrap();
+        session_service.start(task2.id, None).unwrap();
+        session_service.start(task3.id, None).unwrap();
 
         let active = session_service.get_active().unwrap().unwrap();
         assert_eq!(active.task.id, task3.id);
@@ -790,7 +798,7 @@ mod tests {
         let (session_service, task_service) = create_test_services();
 
         let task = task_service.get_or_create("test-task").unwrap();
-        let session = session_service.start(task.id).unwrap();
+        let session = session_service.start(task.id, None).unwrap();
 
         let new_start = Utc::now() - chrono::Duration::hours(2);
         let new_end = Utc::now() - chrono::Duration::hours(1);
@@ -808,7 +816,7 @@ mod tests {
         let (session_service, task_service) = create_test_services();
 
         let task = task_service.get_or_create("test-task").unwrap();
-        session_service.start(task.id).unwrap();
+        session_service.start(task.id, None).unwrap();
         session_service.stop().unwrap();
 
         let today = Local::now().date_naive();
@@ -825,10 +833,10 @@ mod tests {
         let task1 = task_service.get_or_create("task-1").unwrap();
         let task2 = task_service.get_or_create("task-2").unwrap();
 
-        session_service.start(task1.id).unwrap();
+        session_service.start(task1.id, None).unwrap();
         session_service.stop().unwrap();
 
-        session_service.start(task2.id).unwrap();
+        session_service.start(task2.id, None).unwrap();
         session_service.stop().unwrap();
 
         let recent = session_service.get_recent(10).unwrap();
@@ -842,10 +850,10 @@ mod tests {
 
         let task = task_service.get_or_create("test-task").unwrap();
 
-        session_service.start(task.id).unwrap();
+        session_service.start(task.id, None).unwrap();
         session_service.stop().unwrap();
 
-        session_service.start(task.id).unwrap();
+        session_service.start(task.id, None).unwrap();
         session_service.stop().unwrap();
 
         let last = session_service.get_last_for_task(task.id).unwrap();
@@ -859,10 +867,10 @@ mod tests {
         let task1 = task_service.get_or_create("task-1").unwrap();
         let task2 = task_service.get_or_create("task-2").unwrap();
 
-        session_service.start(task1.id).unwrap();
+        session_service.start(task1.id, None).unwrap();
         session_service.stop().unwrap();
 
-        session_service.start(task2.id).unwrap();
+        session_service.start(task2.id, None).unwrap();
         session_service.stop().unwrap();
 
         let last = session_service.get_last_session_task().unwrap();
@@ -887,7 +895,9 @@ mod tests {
         let start = Utc::now() - chrono::Duration::hours(2);
         let end = Utc::now() - chrono::Duration::hours(1);
 
-        let session = session_service.log_session(task.id, start, end).unwrap();
+        let session = session_service
+            .log_session(task.id, start, end, None)
+            .unwrap();
 
         assert_eq!(session.task_id, task.id);
         assert!(session.end_time.is_some());
@@ -902,7 +912,9 @@ mod tests {
         let start = Utc::now() - chrono::Duration::hours(2);
         let end = Utc::now() - chrono::Duration::hours(1);
 
-        session_service.log_session(task.id, start, end).unwrap();
+        session_service
+            .log_session(task.id, start, end, None)
+            .unwrap();
 
         let date = start.date_naive();
         let sessions = session_service.get_date_range(date, date).unwrap();
@@ -921,7 +933,9 @@ mod tests {
         let start = Utc::now() - chrono::Duration::hours(2);
         let end = Utc::now() - chrono::Duration::hours(1);
 
-        session_service.log_session(task.id, start, end).unwrap();
+        session_service
+            .log_session(task.id, start, end, None)
+            .unwrap();
 
         let date = start.date_naive();
         let quadrant_times = session_service.get_quadrant_time(date, date).unwrap();
@@ -939,7 +953,9 @@ mod tests {
         let start = Utc::now() - chrono::Duration::hours(2);
         let end = Utc::now() - chrono::Duration::hours(1);
 
-        session_service.log_session(task.id, start, end).unwrap();
+        session_service
+            .log_session(task.id, start, end, None)
+            .unwrap();
 
         let date = start.date_naive();
         let task_times = session_service.get_task_time(date, date).unwrap();
@@ -959,7 +975,9 @@ mod tests {
         let start = Utc::now() - chrono::Duration::hours(2);
         let end = Utc::now() - chrono::Duration::hours(1);
 
-        session_service.log_session(task.id, start, end).unwrap();
+        session_service
+            .log_session(task.id, start, end, None)
+            .unwrap();
 
         let date = start.date_naive();
         let tag_times = session_service.get_tag_time(date, date).unwrap();
@@ -979,7 +997,9 @@ mod tests {
         let start = Utc::now() - chrono::Duration::hours(2);
         let end = Utc::now() - chrono::Duration::hours(1);
 
-        session_service.log_session(task.id, start, end).unwrap();
+        session_service
+            .log_session(task.id, start, end, None)
+            .unwrap();
 
         let date = start.date_naive();
         let tags_with_time = session_service.get_tags_with_time(date, date).unwrap();
@@ -1002,11 +1022,15 @@ mod tests {
         let start = Utc::now() - chrono::Duration::hours(2);
         let end = Utc::now() - chrono::Duration::hours(1);
 
-        session_service.log_session(task1.id, start, end).unwrap();
+        session_service
+            .log_session(task1.id, start, end, None)
+            .unwrap();
 
         let start2 = Utc::now() - chrono::Duration::hours(4);
         let end2 = Utc::now() - chrono::Duration::hours(3);
-        session_service.log_session(task2.id, start2, end2).unwrap();
+        session_service
+            .log_session(task2.id, start2, end2, None)
+            .unwrap();
 
         let date = start.date_naive();
         let coding_sessions = session_service
@@ -1028,7 +1052,7 @@ mod tests {
         let (session_service, task_service) = create_test_services();
 
         let task = task_service.get_or_create("test-task").unwrap();
-        let session = session_service.start(task.id).unwrap();
+        let session = session_service.start(task.id, None).unwrap();
 
         let new_start = (Utc::now() - chrono::Duration::hours(3))
             .with_nanosecond(0)
@@ -1056,7 +1080,7 @@ mod tests {
         let (session_service, task_service) = create_test_services();
 
         let task = task_service.get_or_create("test-task").unwrap();
-        let session = session_service.start(task.id).unwrap();
+        let session = session_service.start(task.id, None).unwrap();
 
         let new_start = (Utc::now() - chrono::Duration::hours(1))
             .with_nanosecond(0)
@@ -1076,7 +1100,7 @@ mod tests {
         let (session_service, task_service) = create_test_services();
 
         let task = task_service.get_or_create("test-task").unwrap();
-        let session = session_service.start(task.id).unwrap();
+        let session = session_service.start(task.id, None).unwrap();
 
         let start = Utc::now();
         let end = start - chrono::Duration::hours(1);
@@ -1108,7 +1132,7 @@ mod tests {
         let (session_service, task_service) = create_test_services();
 
         let task = task_service.get_or_create("test-task").unwrap();
-        let session = session_service.start(task.id).unwrap();
+        let session = session_service.start(task.id, None).unwrap();
 
         let before_delete = session_service.get_by_id(session.id).unwrap();
         assert!(before_delete.is_some());

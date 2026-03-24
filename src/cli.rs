@@ -19,6 +19,9 @@ pub enum Commands {
 
         #[arg(long)]
         em: Option<String>,
+
+        #[arg(long)]
+        note: Option<String>,
     },
 
     Stop,
@@ -66,6 +69,9 @@ pub enum Commands {
 
         #[arg(long)]
         em: Option<String>,
+
+        #[arg(long)]
+        note: Option<String>,
     },
 
     Report {

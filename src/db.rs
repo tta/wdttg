@@ -148,6 +148,7 @@ fn run_migrations(conn: &Connection) -> Result<()> {
             start_time TEXT NOT NULL,
             end_time TEXT,
             notes TEXT,
+            note TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
@@ -165,6 +166,18 @@ fn run_migrations(conn: &Connection) -> Result<()> {
         END;
         "#,
     )?;
+
+    let note_column_exists: bool = conn
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('sessions') WHERE name='note')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+
+    if !note_column_exists {
+        conn.execute("ALTER TABLE sessions ADD COLUMN note TEXT", [])?;
+    }
 
     Ok(())
 }

@@ -1,3 +1,4 @@
+use crate::clipboard::{copy_to_clipboard, resolve_note_path};
 use crate::models::EmQuadrant;
 use crate::services::TimeBlock;
 use chrono::{Local, NaiveDate, TimeZone, Timelike};
@@ -95,6 +96,7 @@ pub struct TimelineView {
     search_active: bool,
     filtered_session_blocks: Vec<(usize, i64)>,
     filtered_selected_index: usize,
+    status_message: Option<String>,
 }
 
 impl TimelineView {
@@ -122,6 +124,7 @@ impl TimelineView {
             search_active: false,
             filtered_session_blocks: session_blocks,
             filtered_selected_index: 0,
+            status_message: None,
         }
     }
 
@@ -190,6 +193,9 @@ impl TimelineView {
                                 self.delete_last_word();
                                 self.apply_search_filter();
                             }
+                            (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
+                                self.copy_selected_filtered_session_note();
+                            }
                             (_, KeyCode::Char(c)) => {
                                 self.search_query.push(c);
                                 self.apply_search_filter();
@@ -222,6 +228,8 @@ impl TimelineView {
                             (_, KeyCode::Char(c)) => {
                                 if let Some(zoom) = ZoomLevel::from_key(c) {
                                     self.zoom = zoom;
+                                } else if c == 'o' || c == 'O' {
+                                    self.copy_selected_session_note();
                                 }
                             }
                             _ => {}
@@ -310,6 +318,54 @@ impl TimelineView {
     fn select_next_session(&mut self) {
         if self.selected_index + 1 < self.session_blocks.len() {
             self.selected_index += 1;
+        }
+    }
+
+    fn copy_selected_session_note(&mut self) {
+        if let Some((block_idx, _)) = self.get_selected_session() {
+            if let Some(block) = self.blocks.get(block_idx) {
+                if let Some(note) = &block.note {
+                    match resolve_note_path(note) {
+                        Some(path) => match copy_to_clipboard(&path) {
+                            Ok(()) => {
+                                self.status_message = Some(format!("Copied: {}", path));
+                            }
+                            Err(e) => {
+                                self.status_message = Some(format!("Error: {}", e));
+                            }
+                        },
+                        None => {
+                            self.status_message = Some("Error: WDTTG_VAULT not set".to_string());
+                        }
+                    }
+                } else {
+                    self.status_message = Some("No note for this session".to_string());
+                }
+            }
+        }
+    }
+
+    fn copy_selected_filtered_session_note(&mut self) {
+        if let Some((block_idx, _)) = self.get_selected_filtered_session() {
+            if let Some(block) = self.blocks.get(block_idx) {
+                if let Some(note) = &block.note {
+                    match resolve_note_path(note) {
+                        Some(path) => match copy_to_clipboard(&path) {
+                            Ok(()) => {
+                                self.status_message = Some(format!("Copied: {}", path));
+                            }
+                            Err(e) => {
+                                self.status_message = Some(format!("Error: {}", e));
+                            }
+                        },
+                        None => {
+                            self.status_message = Some("Error: WDTTG_VAULT not set".to_string());
+                        }
+                    }
+                } else {
+                    self.status_message = Some("No note for this session".to_string());
+                }
+            }
         }
     }
 
@@ -562,6 +618,7 @@ impl TimelineView {
         let em_tag = task.em_quadrant().tag().to_string();
         let color = quadrant_color(&block.quadrant?);
         let name = task.name.clone();
+        let note = block.note.clone();
 
         let is_selected = block.session_id.is_some() && block.session_id == selected_session_id;
 
@@ -579,7 +636,7 @@ impl TimelineView {
             Style::default().fg(color)
         };
 
-        Some(Line::from(vec![
+        let mut spans = vec![
             prefix,
             Span::styled(time_str, Style::default().fg(Color::White)),
             Span::raw(" "),
@@ -591,11 +648,24 @@ impl TimelineView {
             Span::styled(name, name_style),
             Span::raw(" "),
             Span::styled(em_tag, Style::default().fg(Color::DarkGray)),
-        ]))
+        ];
+
+        if let Some(note_text) = note {
+            spans.push(Span::raw("  "));
+            spans.push(Span::styled(note_text, Style::default().fg(Color::Magenta)));
+        }
+
+        Some(Line::from(spans))
     }
 
     fn render_footer(&self, f: &mut Frame, area: Rect) {
-        let paragraph = if self.search_active {
+        let paragraph = if let Some(msg) = &self.status_message {
+            Paragraph::new(Line::from(vec![Span::styled(
+                msg.clone(),
+                Style::default().fg(Color::Green),
+            )]))
+            .block(Block::default().borders(Borders::ALL))
+        } else if self.search_active {
             Paragraph::new(Line::from(vec![
                 Span::styled("Search: ", Style::default().fg(Color::Cyan)),
                 Span::styled(self.search_query.clone(), Style::default().fg(Color::White)),
@@ -608,6 +678,8 @@ impl TimelineView {
                 Span::raw(" Select  "),
                 Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
                 Span::raw(" Edit  "),
+                Span::styled("[O]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Open Note  "),
                 Span::styled("[1-3/A]", Style::default().fg(Color::Yellow)),
                 Span::raw(" Zoom  "),
                 Span::styled("[/]", Style::default().fg(Color::Yellow)),
@@ -807,6 +879,7 @@ mod tests {
             end: Some(end),
             task: None,
             quadrant: None,
+            note: None,
         };
 
         assert_eq!(block.duration_seconds(), Some(3600));
@@ -837,6 +910,7 @@ mod tests {
                 end: Some(now + chrono::Duration::minutes(30)),
                 task: None,
                 quadrant: None,
+                note: None,
             },
             TimeBlock {
                 session_id: Some(1),
@@ -844,6 +918,7 @@ mod tests {
                 end: Some(now + chrono::Duration::hours(1)),
                 task: Some(create_test_task(1, "task-1")),
                 quadrant: Some(EmQuadrant::Schedule),
+                note: None,
             },
             TimeBlock {
                 session_id: None,
@@ -851,6 +926,7 @@ mod tests {
                 end: Some(now + chrono::Duration::hours(2)),
                 task: None,
                 quadrant: None,
+                note: None,
             },
             TimeBlock {
                 session_id: Some(2),
@@ -858,6 +934,7 @@ mod tests {
                 end: Some(now + chrono::Duration::hours(3)),
                 task: Some(create_test_task(2, "task-2")),
                 quadrant: Some(EmQuadrant::DoFirst),
+                note: None,
             },
         ]
     }
@@ -918,6 +995,7 @@ mod tests {
             end: Some(now + chrono::Duration::hours(1)),
             task: None,
             quadrant: None,
+            note: None,
         }];
 
         let view = TimelineView::new(blocks, Utc::now().date_naive());

@@ -1,3 +1,4 @@
+use crate::clipboard::{copy_to_clipboard, resolve_note_path};
 use crate::models::SessionWithTask;
 use crate::ui::quadrant_color;
 use chrono::{Local, NaiveDate, TimeZone};
@@ -98,6 +99,7 @@ pub struct HistoryView {
     search_active: bool,
     filtered_indices: Vec<usize>,
     filtered_selected_idx: usize,
+    status_message: Option<String>,
 }
 
 impl HistoryView {
@@ -113,6 +115,7 @@ impl HistoryView {
             search_active: false,
             filtered_indices: all_indices,
             filtered_selected_idx: 0,
+            status_message: None,
         }
     }
 
@@ -193,6 +196,9 @@ impl HistoryView {
                                 self.delete_last_word();
                                 self.apply_search_filter();
                             }
+                            (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
+                                self.copy_selected_filtered_session_note();
+                            }
                             (_, KeyCode::Char(c)) => {
                                 self.search_query.push(c);
                                 self.apply_search_filter();
@@ -226,6 +232,8 @@ impl HistoryView {
                                 if let Some(new_period) = Period::from_key(c) {
                                     self.period = new_period;
                                     return Ok(HistoryViewResult::PeriodChanged(new_period));
+                                } else if c == 'o' || c == 'O' {
+                                    self.copy_selected_session_note();
                                 }
                             }
                             _ => {}
@@ -301,6 +309,52 @@ impl HistoryView {
     fn select_next_session(&mut self) {
         if self.selected_session_idx + 1 < self.sessions.len() {
             self.selected_session_idx += 1;
+        }
+    }
+
+    fn copy_selected_session_note(&mut self) {
+        if let Some(session) = self.sessions.get(self.selected_session_idx) {
+            if let Some(note) = &session.session.note {
+                match resolve_note_path(note) {
+                    Some(path) => match copy_to_clipboard(&path) {
+                        Ok(()) => {
+                            self.status_message = Some(format!("Copied: {}", path));
+                        }
+                        Err(e) => {
+                            self.status_message = Some(format!("Error: {}", e));
+                        }
+                    },
+                    None => {
+                        self.status_message = Some("Error: WDTTG_VAULT not set".to_string());
+                    }
+                }
+            } else {
+                self.status_message = Some("No note for this session".to_string());
+            }
+        }
+    }
+
+    fn copy_selected_filtered_session_note(&mut self) {
+        if let Some(&idx) = self.filtered_indices.get(self.filtered_selected_idx) {
+            if let Some(session) = self.sessions.get(idx) {
+                if let Some(note) = &session.session.note {
+                    match resolve_note_path(note) {
+                        Some(path) => match copy_to_clipboard(&path) {
+                            Ok(()) => {
+                                self.status_message = Some(format!("Copied: {}", path));
+                            }
+                            Err(e) => {
+                                self.status_message = Some(format!("Error: {}", e));
+                            }
+                        },
+                        None => {
+                            self.status_message = Some("Error: WDTTG_VAULT not set".to_string());
+                        }
+                    }
+                } else {
+                    self.status_message = Some("No note for this session".to_string());
+                }
+            }
         }
     }
 
@@ -464,7 +518,7 @@ impl HistoryView {
                     Style::default().fg(color)
                 };
 
-                session_lines.push(Line::from(vec![
+                let mut spans = vec![
                     prefix,
                     Span::styled(time_str, Style::default().fg(Color::White)),
                     Span::raw(" "),
@@ -476,7 +530,17 @@ impl HistoryView {
                     Span::styled(task.name.clone(), name_style),
                     Span::raw(" "),
                     Span::styled(em_tag.to_string(), Style::default().fg(Color::DarkGray)),
-                ]));
+                ];
+
+                if let Some(note) = &session.note {
+                    spans.push(Span::raw("  "));
+                    spans.push(Span::styled(
+                        note.clone(),
+                        Style::default().fg(Color::Magenta),
+                    ));
+                }
+
+                session_lines.push(Line::from(spans));
             }
 
             let session_count = session_lines.len();
@@ -494,7 +558,13 @@ impl HistoryView {
     }
 
     fn render_footer(&self, f: &mut Frame, area: Rect) {
-        let paragraph = if self.search_active {
+        let paragraph = if let Some(msg) = &self.status_message {
+            Paragraph::new(Line::from(vec![Span::styled(
+                msg.clone(),
+                Style::default().fg(Color::Green),
+            )]))
+            .block(Block::default().borders(Borders::ALL))
+        } else if self.search_active {
             Paragraph::new(Line::from(vec![
                 Span::styled("Search: ", Style::default().fg(Color::Cyan)),
                 Span::styled(self.search_query.clone(), Style::default().fg(Color::White)),
@@ -513,6 +583,8 @@ impl HistoryView {
                 Span::raw(" Select  "),
                 Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
                 Span::raw(" Edit  "),
+                Span::styled("[O]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Open Note  "),
                 Span::styled("[/]", Style::default().fg(Color::Yellow)),
                 Span::raw(" Search  "),
                 Span::styled("[Q/Esc]", Style::default().fg(Color::Yellow)),
@@ -591,6 +663,7 @@ mod tests {
                 start_time: now,
                 end_time: Some(now + chrono::Duration::hours(1)),
                 notes: None,
+                note: None,
                 created_at: now,
             },
             task: Task {
