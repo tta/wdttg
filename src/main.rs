@@ -955,7 +955,6 @@ fn handle_report_history(
                     current_period = new_period;
                 }
                 TagPickerResult::Cancelled => {
-                    println!("Cancelled.");
                     return Ok(());
                 }
             }
