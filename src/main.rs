@@ -914,14 +914,6 @@ fn handle_report_history(
                 .get_tags_with_time(start, end)
                 .map_err(|e| e.to_string())?;
 
-            if tags.is_empty() {
-                println!(
-                    "No tagged sessions found for period: {}",
-                    current_period.to_period_str()
-                );
-                return Ok(());
-            }
-
             let picker = TagPicker::new(tags).with_period(current_period);
             match picker.run().map_err(|e| e.to_string())? {
                 TagPickerResult::Selected(selected_tag) => {

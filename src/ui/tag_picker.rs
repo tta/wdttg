@@ -112,10 +112,6 @@ impl TagPicker {
     }
 
     pub fn run(mut self) -> Result<TagPickerResult> {
-        if self.tags.is_empty() {
-            return Ok(TagPickerResult::Cancelled);
-        }
-
         enable_raw_mode().map_err(|e| TagPickerError::Terminal(e.to_string()))?;
         let mut stdout = io::stdout();
         execute!(stdout, EnterAlternateScreen, EnableMouseCapture)
@@ -190,6 +186,9 @@ impl TagPicker {
     }
 
     fn move_up(&mut self) {
+        if self.tags.is_empty() {
+            return;
+        }
         let i = match self.state.selected() {
             Some(i) => {
                 if i == 0 {
@@ -204,6 +203,9 @@ impl TagPicker {
     }
 
     fn move_down(&mut self) {
+        if self.tags.is_empty() {
+            return;
+        }
         let i = match self.state.selected() {
             Some(i) => {
                 if i >= self.tags.len() - 1 {
@@ -250,6 +252,16 @@ impl TagPicker {
     }
 
     fn render_list(&mut self, f: &mut Frame, area: Rect) {
+        if self.tags.is_empty() {
+            let paragraph = Paragraph::new(
+                "No sessions in this period.\n\nPress D/W/M to change period or Q to quit.",
+            )
+            .block(Block::default().borders(Borders::ALL))
+            .style(Style::default().fg(Color::Yellow));
+            f.render_widget(paragraph, area);
+            return;
+        }
+
         let items: Vec<ListItem> = self
             .tags
             .iter()
