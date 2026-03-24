@@ -718,8 +718,10 @@ fn print_24h_bar_static(blocks: &[TimeBlock], width: usize) {
         let start_idx = (start_mins / mins_per_char) as usize;
         let end_idx = ((end_mins / mins_per_char) as usize).min(width);
 
-        for ch in &mut bar[start_idx..end_idx] {
-            *ch = '█';
+        if start_idx < end_idx {
+            for ch in &mut bar[start_idx..end_idx] {
+                *ch = '█';
+            }
         }
     }
 

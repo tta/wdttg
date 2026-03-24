@@ -1,6 +1,6 @@
 use crate::db::Database;
 use crate::models::{Session, SessionWithTask, Task, TaskStatus};
-use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
+use chrono::{DateTime, FixedOffset, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
 use rusqlite::{params, OptionalExtension};
 use std::sync::Arc;
 use thiserror::Error;
@@ -204,8 +204,23 @@ impl SessionService {
     pub fn get_day(&self, date: NaiveDate) -> Result<Vec<SessionWithTask>> {
         let conn = self.db.connection();
 
-        let start_of_day = format!("{} 00:00:00", date.format("%Y-%m-%d"));
-        let end_of_day = format!("{} 23:59:59", date.format("%Y-%m-%d"));
+        let start_of_day_local = date.and_hms_opt(0, 0, 0).unwrap();
+        let end_of_day_local = date.and_hms_opt(23, 59, 59).unwrap();
+
+        let local_tz = Local::now().timezone();
+        let start_utc: DateTime<Utc> = local_tz
+            .from_local_datetime(&start_of_day_local)
+            .single()
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap();
+        let end_utc: DateTime<Utc> = local_tz
+            .from_local_datetime(&end_of_day_local)
+            .single()
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap();
+
+        let start_of_day = format_sqlite_datetime(&start_utc);
+        let end_of_day = format_sqlite_datetime(&end_utc);
 
         let mut stmt = conn.prepare(
             "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.created_at,
@@ -232,11 +247,22 @@ impl SessionService {
             return Ok(vec![]);
         }
 
+        let local_tz = Local::now().timezone();
+        let start_of_day_local = date.and_hms_opt(0, 0, 0).unwrap();
+        let end_of_day_local = date.and_hms_opt(23, 59, 59).unwrap();
+
+        let start_of_day: DateTime<Utc> = local_tz
+            .from_local_datetime(&start_of_day_local)
+            .single()
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap();
+        let end_of_day: DateTime<Utc> = local_tz
+            .from_local_datetime(&end_of_day_local)
+            .single()
+            .map(|dt| dt.with_timezone(&Utc))
+            .unwrap();
+
         let mut blocks: Vec<TimeBlock> = Vec::new();
-
-        let start_of_day = date.and_hms_opt(0, 0, 0).unwrap().and_utc();
-        let end_of_day = date.and_hms_opt(23, 59, 59).unwrap().and_utc();
-
         let mut last_end: Option<DateTime<Utc>> = None;
 
         for swt in sessions {
@@ -785,7 +811,7 @@ mod tests {
         session_service.start(task.id).unwrap();
         session_service.stop().unwrap();
 
-        let today = Utc::now().date_naive();
+        let today = Local::now().date_naive();
         let sessions = session_service.get_day(today).unwrap();
 
         assert!(!sessions.is_empty());
