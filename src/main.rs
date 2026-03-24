@@ -1033,6 +1033,8 @@ fn handle_completions(shell: &str) -> Result<(), String> {
 }
 
 fn main() {
+    dotenv::dotenv().ok();
+
     let cli = cli::parse();
 
     let db = match Database::open() {
