@@ -1,4 +1,4 @@
-use crate::clipboard::{copy_to_clipboard, resolve_link_path};
+use crate::clipboard::{open_link, OpenLinkResult};
 use crate::models::EmQuadrant;
 use crate::services::TimeBlock;
 use chrono::{Local, NaiveDate, TimeZone, Timelike};
@@ -194,7 +194,7 @@ impl TimelineView {
                                 self.apply_search_filter();
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
-                                self.copy_selected_filtered_session_note();
+                                self.open_selected_filtered_session_link();
                             }
                             (_, KeyCode::Char(c)) => {
                                 self.search_query.push(c);
@@ -229,7 +229,7 @@ impl TimelineView {
                                 if let Some(zoom) = ZoomLevel::from_key(c) {
                                     self.zoom = zoom;
                                 } else if c == 'o' || c == 'O' {
-                                    self.copy_selected_session_note();
+                                    self.open_selected_session_link();
                                 }
                             }
                             _ => {}
@@ -321,21 +321,22 @@ impl TimelineView {
         }
     }
 
-    fn copy_selected_session_note(&mut self) {
+    fn open_selected_session_link(&mut self) {
         if let Some((block_idx, _)) = self.get_selected_session() {
             if let Some(block) = self.blocks.get(block_idx) {
-                if let Some(note) = &block.link {
-                    match resolve_link_path(note) {
-                        Some(path) => match copy_to_clipboard(&path) {
-                            Ok(()) => {
-                                self.status_message = Some(format!("Copied: {}", path));
-                            }
-                            Err(e) => {
-                                self.status_message = Some(format!("Error: {}", e));
-                            }
-                        },
-                        None => {
-                            self.status_message = Some("Error: WDTTG_VAULT not set".to_string());
+                if let Some(link) = &block.link {
+                    match open_link(link) {
+                        Ok(OpenLinkResult::OpenedUrl) => {
+                            self.status_message = Some("Opened in browser".to_string());
+                        }
+                        Ok(OpenLinkResult::CopiedPath(path)) => {
+                            self.status_message = Some(format!("Copied: {}", path));
+                        }
+                        Ok(OpenLinkResult::CopiedRaw(text)) => {
+                            self.status_message = Some(format!("Copied: {}", text));
+                        }
+                        Err(e) => {
+                            self.status_message = Some(format!("Error: {}", e));
                         }
                     }
                 } else {
@@ -345,21 +346,22 @@ impl TimelineView {
         }
     }
 
-    fn copy_selected_filtered_session_note(&mut self) {
+    fn open_selected_filtered_session_link(&mut self) {
         if let Some((block_idx, _)) = self.get_selected_filtered_session() {
             if let Some(block) = self.blocks.get(block_idx) {
-                if let Some(note) = &block.link {
-                    match resolve_link_path(note) {
-                        Some(path) => match copy_to_clipboard(&path) {
-                            Ok(()) => {
-                                self.status_message = Some(format!("Copied: {}", path));
-                            }
-                            Err(e) => {
-                                self.status_message = Some(format!("Error: {}", e));
-                            }
-                        },
-                        None => {
-                            self.status_message = Some("Error: WDTTG_VAULT not set".to_string());
+                if let Some(link) = &block.link {
+                    match open_link(link) {
+                        Ok(OpenLinkResult::OpenedUrl) => {
+                            self.status_message = Some("Opened in browser".to_string());
+                        }
+                        Ok(OpenLinkResult::CopiedPath(path)) => {
+                            self.status_message = Some(format!("Copied: {}", path));
+                        }
+                        Ok(OpenLinkResult::CopiedRaw(text)) => {
+                            self.status_message = Some(format!("Copied: {}", text));
+                        }
+                        Err(e) => {
+                            self.status_message = Some(format!("Error: {}", e));
                         }
                     }
                 } else {

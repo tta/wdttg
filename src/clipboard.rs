@@ -46,6 +46,50 @@ pub fn resolve_link_path(link: &str) -> Option<String> {
     Some(format!("{}/{}", vault, file))
 }
 
+pub enum OpenLinkResult {
+    OpenedUrl,
+    CopiedPath(String),
+    CopiedRaw(String),
+}
+
+pub fn open_link(link: &str) -> Result<OpenLinkResult, String> {
+    let link = link.trim();
+
+    if link.starts_with("http://") || link.starts_with("https://") {
+        open_url(link)?;
+        Ok(OpenLinkResult::OpenedUrl)
+    } else if link.starts_with("[[") && link.ends_with("]]") {
+        let path = resolve_link_path(link).ok_or("WDTTG_VAULT not set")?;
+        copy_to_clipboard(&path)?;
+        Ok(OpenLinkResult::CopiedPath(path))
+    } else {
+        copy_to_clipboard(link)?;
+        Ok(OpenLinkResult::CopiedRaw(link.to_string()))
+    }
+}
+
+fn open_url(url: &str) -> Result<(), String> {
+    #[cfg(target_os = "macos")]
+    {
+        Command::new("open")
+            .arg(url)
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {}", e))?;
+    }
+    #[cfg(target_os = "linux")]
+    {
+        Command::new("xdg-open")
+            .arg(url)
+            .spawn()
+            .map_err(|e| format!("Failed to open URL: {}", e))?;
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        return Err("Unsupported platform".to_string());
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

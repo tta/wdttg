@@ -1,4 +1,4 @@
-use crate::clipboard::{copy_to_clipboard, resolve_link_path};
+use crate::clipboard::{open_link, OpenLinkResult};
 use crate::models::SessionWithTask;
 use crate::ui::quadrant_color;
 use chrono::{Local, NaiveDate, TimeZone};
@@ -197,7 +197,7 @@ impl HistoryView {
                                 self.apply_search_filter();
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
-                                self.copy_selected_filtered_session_note();
+                                self.open_selected_filtered_session_link();
                             }
                             (_, KeyCode::Char(c)) => {
                                 self.search_query.push(c);
@@ -233,7 +233,7 @@ impl HistoryView {
                                     self.period = new_period;
                                     return Ok(HistoryViewResult::PeriodChanged(new_period));
                                 } else if c == 'o' || c == 'O' {
-                                    self.copy_selected_session_note();
+                                    self.open_selected_session_link();
                                 }
                             }
                             _ => {}
@@ -312,20 +312,21 @@ impl HistoryView {
         }
     }
 
-    fn copy_selected_session_note(&mut self) {
+    fn open_selected_session_link(&mut self) {
         if let Some(session) = self.sessions.get(self.selected_session_idx) {
-            if let Some(note) = &session.session.link {
-                match resolve_link_path(note) {
-                    Some(path) => match copy_to_clipboard(&path) {
-                        Ok(()) => {
-                            self.status_message = Some(format!("Copied: {}", path));
-                        }
-                        Err(e) => {
-                            self.status_message = Some(format!("Error: {}", e));
-                        }
-                    },
-                    None => {
-                        self.status_message = Some("Error: WDTTG_VAULT not set".to_string());
+            if let Some(link) = &session.session.link {
+                match open_link(link) {
+                    Ok(OpenLinkResult::OpenedUrl) => {
+                        self.status_message = Some("Opened in browser".to_string());
+                    }
+                    Ok(OpenLinkResult::CopiedPath(path)) => {
+                        self.status_message = Some(format!("Copied: {}", path));
+                    }
+                    Ok(OpenLinkResult::CopiedRaw(text)) => {
+                        self.status_message = Some(format!("Copied: {}", text));
+                    }
+                    Err(e) => {
+                        self.status_message = Some(format!("Error: {}", e));
                     }
                 }
             } else {
@@ -334,21 +335,22 @@ impl HistoryView {
         }
     }
 
-    fn copy_selected_filtered_session_note(&mut self) {
+    fn open_selected_filtered_session_link(&mut self) {
         if let Some(&idx) = self.filtered_indices.get(self.filtered_selected_idx) {
             if let Some(session) = self.sessions.get(idx) {
-                if let Some(note) = &session.session.link {
-                    match resolve_link_path(note) {
-                        Some(path) => match copy_to_clipboard(&path) {
-                            Ok(()) => {
-                                self.status_message = Some(format!("Copied: {}", path));
-                            }
-                            Err(e) => {
-                                self.status_message = Some(format!("Error: {}", e));
-                            }
-                        },
-                        None => {
-                            self.status_message = Some("Error: WDTTG_VAULT not set".to_string());
+                if let Some(link) = &session.session.link {
+                    match open_link(link) {
+                        Ok(OpenLinkResult::OpenedUrl) => {
+                            self.status_message = Some("Opened in browser".to_string());
+                        }
+                        Ok(OpenLinkResult::CopiedPath(path)) => {
+                            self.status_message = Some(format!("Copied: {}", path));
+                        }
+                        Ok(OpenLinkResult::CopiedRaw(text)) => {
+                            self.status_message = Some(format!("Copied: {}", text));
+                        }
+                        Err(e) => {
+                            self.status_message = Some(format!("Error: {}", e));
                         }
                     }
                 } else {

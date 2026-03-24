@@ -7,7 +7,7 @@ pub mod time_parser;
 pub mod ui;
 
 pub use cli::{Cli, Commands, ReportCommands};
-pub use clipboard::{copy_to_clipboard, resolve_link_path};
+pub use clipboard::{copy_to_clipboard, open_link, resolve_link_path, OpenLinkResult};
 pub use db::{Database, DbError};
 pub use models::{
     EmQuadrant, QuadrantTime, Session, SessionWithTask, TagTime, Task, TaskStatus, TaskTime,

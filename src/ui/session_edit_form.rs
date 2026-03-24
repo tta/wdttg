@@ -1,4 +1,4 @@
-use crate::clipboard::{copy_to_clipboard, resolve_link_path};
+use crate::clipboard::{open_link, OpenLinkResult};
 use crate::models::Session;
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
 use crossterm::{
@@ -354,39 +354,18 @@ impl SessionEditForm {
             return;
         }
 
-        let link = self.session.link.trim();
-
-        if link.starts_with("http://") || link.starts_with("https://") {
-            match open_url(link) {
-                Ok(()) => {
-                    self.error_message = Some("Opened in browser".to_string());
-                }
-                Err(e) => {
-                    self.error_message = Some(format!("Failed to open URL: {}", e));
-                }
+        match open_link(&self.session.link) {
+            Ok(OpenLinkResult::OpenedUrl) => {
+                self.error_message = Some("Opened in browser".to_string());
             }
-        } else if link.starts_with("[[") && link.ends_with("]]") {
-            match resolve_link_path(link) {
-                Some(path) => match copy_to_clipboard(&path) {
-                    Ok(()) => {
-                        self.error_message = Some(format!("Copied: {}", path));
-                    }
-                    Err(e) => {
-                        self.error_message = Some(format!("Failed to copy: {}", e));
-                    }
-                },
-                None => {
-                    self.error_message = Some("WDTTG_VAULT not set".to_string());
-                }
+            Ok(OpenLinkResult::CopiedPath(path)) => {
+                self.error_message = Some(format!("Copied: {}", path));
             }
-        } else {
-            match copy_to_clipboard(link) {
-                Ok(()) => {
-                    self.error_message = Some(format!("Copied: {}", link));
-                }
-                Err(e) => {
-                    self.error_message = Some(format!("Failed to copy: {}", e));
-                }
+            Ok(OpenLinkResult::CopiedRaw(text)) => {
+                self.error_message = Some(format!("Copied: {}", text));
+            }
+            Err(e) => {
+                self.error_message = Some(e);
             }
         }
     }
@@ -616,28 +595,6 @@ fn parse_datetime_input(input: &str) -> std::result::Result<DateTime<Utc>, Strin
     }
 
     Err("Invalid format. Use: YYYY-MM-DD HH:MM or M/D HH:MM".to_string())
-}
-
-fn open_url(url: &str) -> std::result::Result<(), String> {
-    #[cfg(target_os = "macos")]
-    {
-        std::process::Command::new("open")
-            .arg(url)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    #[cfg(target_os = "linux")]
-    {
-        std::process::Command::new("xdg-open")
-            .arg(url)
-            .spawn()
-            .map_err(|e| e.to_string())?;
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        return Err("Unsupported platform".to_string());
-    }
-    Ok(())
 }
 
 pub fn edit_session(session: Session, task_name: String) -> Result<SessionEditResult> {
