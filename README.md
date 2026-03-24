@@ -185,11 +185,26 @@ wdttg report history --period month
 
 ## Configuration
 
-### Environment Variables
+Config file location:
+- **macOS**: `~/Library/Application Support/wdttg/wdttg.json`
+- **Linux**: `~/.config/wdttg/wdttg.json`
 
-| Variable | Description | Default |
-|----------|-------------|---------|
-| `WDTTG_DB` | Custom database path | `~/.local/share/wdttg/wdttg.db` |
+Example `wdttg.json`:
+
+```json
+{
+  "db": "~/.local/share/wdttg/wdttg.db",
+  "vault": "~/notes/obsidian"
+}
+```
+
+**Fields:**
+- `db`: Database path (default: `~/.local/share/wdttg/wdttg.db`)
+- `vault`: Obsidian vault path for wiki-link resolution
+
+**Environment variable overrides:**
+- `WDTTG_DB` overrides `db` from config
+- `WDTTG_VAULT` overrides `vault` from config
 
 ### Database Location
 

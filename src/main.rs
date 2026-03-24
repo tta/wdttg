@@ -1042,7 +1042,10 @@ fn handle_completions(shell: &str) -> Result<(), String> {
 }
 
 fn main() {
-    dotenv::dotenv().ok();
+    if let Err(e) = wdttg::config::init() {
+        eprintln!("Error loading config: {}", e);
+        std::process::exit(1);
+    }
 
     let cli = cli::parse();
 
