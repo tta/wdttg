@@ -169,10 +169,10 @@ impl HistoryView {
                                 self.cancel_search();
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
-                                self.select_next_filtered_session();
+                                self.select_prev_filtered_session();
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
-                                self.select_prev_filtered_session();
+                                self.select_next_filtered_session();
                             }
                             (_, KeyCode::Enter) => {
                                 if let Some(&idx) =
@@ -187,6 +187,10 @@ impl HistoryView {
                             }
                             (_, KeyCode::Backspace) => {
                                 self.search_query.pop();
+                                self.apply_search_filter();
+                            }
+                            (KeyModifiers::CONTROL, KeyCode::Char('w')) => {
+                                self.delete_last_word();
                                 self.apply_search_filter();
                             }
                             (_, KeyCode::Char(c)) => {
@@ -206,16 +210,10 @@ impl HistoryView {
                             (_, KeyCode::Char('/')) => {
                                 self.enter_search_mode();
                             }
-                            (_, KeyCode::Up) => {
-                                self.select_prev_session();
-                            }
-                            (_, KeyCode::Down) => {
+                            (_, KeyCode::Up) | (_, KeyCode::Char('k')) => {
                                 self.select_next_session();
                             }
-                            (_, KeyCode::Char('j')) => {
-                                self.select_next_session();
-                            }
-                            (_, KeyCode::Char('k')) => {
+                            (_, KeyCode::Down) | (_, KeyCode::Char('j')) => {
                                 self.select_prev_session();
                             }
                             (_, KeyCode::Enter) => {
@@ -250,6 +248,17 @@ impl HistoryView {
         self.search_query.clear();
         self.filtered_indices = (0..self.sessions.len()).collect();
         self.filtered_selected_idx = 0;
+    }
+
+    fn delete_last_word(&mut self) {
+        let trimmed = self.search_query.trim_end();
+        if trimmed.is_empty() {
+            self.search_query.clear();
+        } else if let Some(pos) = trimmed.rfind(|c: char| c.is_whitespace()) {
+            self.search_query.truncate(pos);
+        } else {
+            self.search_query.clear();
+        }
     }
 
     fn apply_search_filter(&mut self) {
@@ -754,5 +763,25 @@ mod tests {
         assert_eq!(view.filtered_selected_idx, 2);
         view.select_prev_filtered_session();
         assert_eq!(view.filtered_selected_idx, 1);
+    }
+
+    #[test]
+    fn test_history_view_delete_last_word() {
+        let sessions = vec![create_test_session_with_task(1, "task-1")];
+        let mut view = HistoryView::new(sessions, "test".to_string());
+
+        view.search_query = "hello world test".to_string();
+        view.delete_last_word();
+        assert_eq!(view.search_query, "hello world");
+
+        view.delete_last_word();
+        assert_eq!(view.search_query, "hello");
+
+        view.delete_last_word();
+        assert_eq!(view.search_query, "");
+
+        view.search_query = "   ".to_string();
+        view.delete_last_word();
+        assert_eq!(view.search_query, "");
     }
 }

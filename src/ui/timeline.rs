@@ -171,10 +171,10 @@ impl TimelineView {
                                 self.cancel_search();
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
-                                self.select_next_filtered_session();
+                                self.select_prev_filtered_session();
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
-                                self.select_prev_filtered_session();
+                                self.select_next_filtered_session();
                             }
                             (_, KeyCode::Enter) => {
                                 if let Some((_, session_id)) = self.get_selected_filtered_session()
@@ -184,6 +184,10 @@ impl TimelineView {
                             }
                             (_, KeyCode::Backspace) => {
                                 self.search_query.pop();
+                                self.apply_search_filter();
+                            }
+                            (KeyModifiers::CONTROL, KeyCode::Char('w')) => {
+                                self.delete_last_word();
                                 self.apply_search_filter();
                             }
                             (_, KeyCode::Char(c)) => {
@@ -240,6 +244,17 @@ impl TimelineView {
         self.search_query.clear();
         self.filtered_session_blocks = self.session_blocks.clone();
         self.filtered_selected_index = 0;
+    }
+
+    fn delete_last_word(&mut self) {
+        let trimmed = self.search_query.trim_end();
+        if trimmed.is_empty() {
+            self.search_query.clear();
+        } else if let Some(pos) = trimmed.rfind(|c: char| c.is_whitespace()) {
+            self.search_query.truncate(pos);
+        } else {
+            self.search_query.clear();
+        }
     }
 
     fn apply_search_filter(&mut self) {
@@ -973,5 +988,25 @@ mod tests {
         assert_eq!(view.filtered_selected_index, 1);
         view.select_prev_filtered_session();
         assert_eq!(view.filtered_selected_index, 0);
+    }
+
+    #[test]
+    fn test_timeline_view_delete_last_word() {
+        let blocks = create_test_blocks();
+        let mut view = TimelineView::new(blocks, Utc::now().date_naive());
+
+        view.search_query = "hello world test".to_string();
+        view.delete_last_word();
+        assert_eq!(view.search_query, "hello world");
+
+        view.delete_last_word();
+        assert_eq!(view.search_query, "hello");
+
+        view.delete_last_word();
+        assert_eq!(view.search_query, "");
+
+        view.search_query = "   ".to_string();
+        view.delete_last_word();
+        assert_eq!(view.search_query, "");
     }
 }
