@@ -169,10 +169,10 @@ impl HistoryView {
                                 self.cancel_search();
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
-                                self.select_prev_filtered_session();
+                                self.select_next_filtered_session();
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
-                                self.select_next_filtered_session();
+                                self.select_prev_filtered_session();
                             }
                             (_, KeyCode::Enter) => {
                                 if let Some(&idx) =
@@ -211,10 +211,10 @@ impl HistoryView {
                                 self.enter_search_mode();
                             }
                             (_, KeyCode::Up) | (_, KeyCode::Char('k')) => {
-                                self.select_next_session();
+                                self.select_prev_session();
                             }
                             (_, KeyCode::Down) | (_, KeyCode::Char('j')) => {
-                                self.select_prev_session();
+                                self.select_next_session();
                             }
                             (_, KeyCode::Enter) => {
                                 if let Some(session) = self.sessions.get(self.selected_session_idx)

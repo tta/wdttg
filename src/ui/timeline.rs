@@ -171,10 +171,10 @@ impl TimelineView {
                                 self.cancel_search();
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
-                                self.select_prev_filtered_session();
+                                self.select_next_filtered_session();
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
-                                self.select_next_filtered_session();
+                                self.select_prev_filtered_session();
                             }
                             (_, KeyCode::Enter) => {
                                 if let Some((_, session_id)) = self.get_selected_filtered_session()
@@ -214,10 +214,10 @@ impl TimelineView {
                                 }
                             }
                             (_, KeyCode::Up) | (_, KeyCode::Char('k')) => {
-                                self.select_next_session();
+                                self.select_prev_session();
                             }
                             (_, KeyCode::Down) | (_, KeyCode::Char('j')) => {
-                                self.select_prev_session();
+                                self.select_next_session();
                             }
                             (_, KeyCode::Char(c)) => {
                                 if let Some(zoom) = ZoomLevel::from_key(c) {
