@@ -435,7 +435,7 @@ impl TimelineView {
 
         let mut session_blocks: Vec<&TimeBlock> =
             visible_blocks.into_iter().filter(|b| !b.is_gap()).collect();
-        session_blocks.sort_by(|a, b| b.start.cmp(&a.start));
+        session_blocks.sort_by(|a, b| a.start.cmp(&b.start));
 
         if self.search_active {
             let filtered_blocks: Vec<&TimeBlock> = session_blocks

@@ -11,13 +11,13 @@ All TUI views (timeline, history, tag picker, picker) follow vim convention:
 
 ### Implementation details
 
-Sessions are sorted reverse-chronologically (newest first, oldest last):
-- Index 0 = newest session (rendered at TOP of screen)
-- Index N-1 = oldest session (rendered at BOTTOM of screen)
+Sessions are sorted chronologically (oldest first, newest last):
+- Index 0 = oldest session (rendered at TOP of screen)
+- Index N-1 = newest session (rendered at BOTTOM of screen)
 
 Therefore:
-- `select_prev_session()` DECREMENTS index (moves toward index 0, UP visually)
-- `select_next_session()` INCREMENTS index (moves toward higher index, DOWN visually)
+- `select_prev_session()` DECREMENTS index (moves toward index 0, UP visually to EARLIER sessions)
+- `select_next_session()` INCREMENTS index (moves toward higher index, DOWN visually to LATER sessions)
 
 ### Key bindings summary
 
