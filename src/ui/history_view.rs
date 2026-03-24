@@ -1,4 +1,4 @@
-use crate::clipboard::{copy_to_clipboard, resolve_note_path};
+use crate::clipboard::{copy_to_clipboard, resolve_link_path};
 use crate::models::SessionWithTask;
 use crate::ui::quadrant_color;
 use chrono::{Local, NaiveDate, TimeZone};
@@ -314,8 +314,8 @@ impl HistoryView {
 
     fn copy_selected_session_note(&mut self) {
         if let Some(session) = self.sessions.get(self.selected_session_idx) {
-            if let Some(note) = &session.session.note {
-                match resolve_note_path(note) {
+            if let Some(note) = &session.session.link {
+                match resolve_link_path(note) {
                     Some(path) => match copy_to_clipboard(&path) {
                         Ok(()) => {
                             self.status_message = Some(format!("Copied: {}", path));
@@ -329,7 +329,7 @@ impl HistoryView {
                     }
                 }
             } else {
-                self.status_message = Some("No note for this session".to_string());
+                self.status_message = Some("No link for this session".to_string());
             }
         }
     }
@@ -337,8 +337,8 @@ impl HistoryView {
     fn copy_selected_filtered_session_note(&mut self) {
         if let Some(&idx) = self.filtered_indices.get(self.filtered_selected_idx) {
             if let Some(session) = self.sessions.get(idx) {
-                if let Some(note) = &session.session.note {
-                    match resolve_note_path(note) {
+                if let Some(note) = &session.session.link {
+                    match resolve_link_path(note) {
                         Some(path) => match copy_to_clipboard(&path) {
                             Ok(()) => {
                                 self.status_message = Some(format!("Copied: {}", path));
@@ -352,7 +352,7 @@ impl HistoryView {
                         }
                     }
                 } else {
-                    self.status_message = Some("No note for this session".to_string());
+                    self.status_message = Some("No link for this session".to_string());
                 }
             }
         }
@@ -532,10 +532,10 @@ impl HistoryView {
                     Span::styled(em_tag.to_string(), Style::default().fg(Color::DarkGray)),
                 ];
 
-                if let Some(note) = &session.note {
+                if let Some(link) = &session.link {
                     spans.push(Span::raw("  "));
                     spans.push(Span::styled(
-                        note.clone(),
+                        link.clone(),
                         Style::default().fg(Color::Magenta),
                     ));
                 }
@@ -663,7 +663,7 @@ mod tests {
                 start_time: now,
                 end_time: Some(now + chrono::Duration::hours(1)),
                 notes: None,
-                note: None,
+                link: None,
                 created_at: now,
             },
             task: Task {

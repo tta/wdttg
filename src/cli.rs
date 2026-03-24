@@ -21,7 +21,7 @@ pub enum Commands {
         em: Option<String>,
 
         #[arg(long)]
-        note: Option<String>,
+        link: Option<String>,
     },
 
     Stop,
@@ -71,7 +71,7 @@ pub enum Commands {
         em: Option<String>,
 
         #[arg(long)]
-        note: Option<String>,
+        link: Option<String>,
     },
 
     Report {

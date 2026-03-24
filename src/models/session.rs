@@ -8,7 +8,7 @@ pub struct Session {
     pub start_time: DateTime<Utc>,
     pub end_time: Option<DateTime<Utc>>,
     pub notes: Option<String>,
-    pub note: Option<String>,
+    pub link: Option<String>,
     pub created_at: DateTime<Utc>,
 }
 
@@ -123,7 +123,7 @@ mod tests {
             start_time: Utc::now(),
             end_time: None,
             notes: None,
-            note: None,
+            link: None,
             created_at: Utc::now(),
         };
         assert!(active_session.is_active());
@@ -134,7 +134,7 @@ mod tests {
             start_time: Utc::now(),
             end_time: Some(Utc::now()),
             notes: None,
-            note: None,
+            link: None,
             created_at: Utc::now(),
         };
         assert!(!completed_session.is_active());
@@ -151,7 +151,7 @@ mod tests {
             start_time: start,
             end_time: Some(end),
             notes: None,
-            note: None,
+            link: None,
             created_at: start,
         };
 
@@ -167,7 +167,7 @@ mod tests {
             start_time: Utc::now(),
             end_time: None,
             notes: None,
-            note: None,
+            link: None,
             created_at: Utc::now(),
         };
 

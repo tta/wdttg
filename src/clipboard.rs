@@ -31,11 +31,11 @@ pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn resolve_note_path(note: &str) -> Option<String> {
+pub fn resolve_link_path(link: &str) -> Option<String> {
     let vault = std::env::var("WDTTG_VAULT").ok()?;
 
-    let note = note.trim_start_matches("[[").trim_end_matches("]]");
-    let file = note.split('#').next()?;
+    let link = link.trim_start_matches("[[").trim_end_matches("]]");
+    let file = link.split('#').next()?;
 
     let file = if file.ends_with(".md") {
         file.to_string()
@@ -54,19 +54,19 @@ mod tests {
     static VAULT_LOCK: Mutex<()> = Mutex::new(());
 
     #[test]
-    fn test_resolve_note_path_simple() {
+    fn test_resolve_link_path_simple() {
         let _lock = VAULT_LOCK.lock().unwrap();
         std::env::set_var("WDTTG_VAULT", "/test/vault");
-        let result = resolve_note_path("[[daily/2026-03-24]]");
+        let result = resolve_link_path("[[daily/2026-03-24]]");
         assert_eq!(result, Some("/test/vault/daily/2026-03-24.md".to_string()));
         std::env::remove_var("WDTTG_VAULT");
     }
 
     #[test]
-    fn test_resolve_note_path_with_section() {
+    fn test_resolve_link_path_with_section() {
         let _lock = VAULT_LOCK.lock().unwrap();
         std::env::set_var("WDTTG_VAULT", "/test/vault");
-        let result = resolve_note_path("[[projects/feature-x#Implementation]]");
+        let result = resolve_link_path("[[projects/feature-x#Implementation]]");
         assert_eq!(
             result,
             Some("/test/vault/projects/feature-x.md".to_string())
@@ -75,19 +75,19 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_note_path_with_md_extension() {
+    fn test_resolve_link_path_with_md_extension() {
         let _lock = VAULT_LOCK.lock().unwrap();
         std::env::set_var("WDTTG_VAULT", "/test/vault");
-        let result = resolve_note_path("[[notes/meeting.md]]");
+        let result = resolve_link_path("[[notes/meeting.md]]");
         assert_eq!(result, Some("/test/vault/notes/meeting.md".to_string()));
         std::env::remove_var("WDTTG_VAULT");
     }
 
     #[test]
-    fn test_resolve_note_path_no_vault() {
+    fn test_resolve_link_path_no_vault() {
         let _lock = VAULT_LOCK.lock().unwrap();
         std::env::remove_var("WDTTG_VAULT");
-        let result = resolve_note_path("[[daily/2026-03-24]]");
+        let result = resolve_link_path("[[daily/2026-03-24]]");
         assert_eq!(result, None);
     }
 }

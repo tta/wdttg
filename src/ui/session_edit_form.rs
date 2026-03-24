@@ -36,6 +36,7 @@ pub enum SessionEditResult {
         start: DateTime<Utc>,
         end: Option<DateTime<Utc>>,
         notes: Option<String>,
+        link: Option<String>,
     },
     Deleted(i64),
     Cancelled,
@@ -47,6 +48,7 @@ pub struct EditableSession {
     pub start: DateTime<Utc>,
     pub end: Option<DateTime<Utc>>,
     pub notes: String,
+    pub link: String,
 }
 
 impl From<Session> for EditableSession {
@@ -56,6 +58,7 @@ impl From<Session> for EditableSession {
             start: session.start_time,
             end: session.end_time,
             notes: session.notes.clone().unwrap_or_default(),
+            link: session.link.clone().unwrap_or_default(),
         }
     }
 }
@@ -65,9 +68,10 @@ enum Field {
     StartTime,
     EndTime,
     Notes,
+    Link,
 }
 
-const FIELDS: [Field; 3] = [Field::StartTime, Field::EndTime, Field::Notes];
+const FIELDS: [Field; 4] = [Field::StartTime, Field::EndTime, Field::Notes, Field::Link];
 
 pub struct SessionEditForm {
     session: EditableSession,
@@ -102,6 +106,7 @@ impl SessionEditForm {
         self.session.start != self.original.start
             || self.session.end != self.original.end
             || self.session.notes != self.original.notes
+            || self.session.link != self.original.link
     }
 
     pub fn run(mut self) -> Result<SessionEditResult> {
@@ -254,6 +259,10 @@ impl SessionEditForm {
                 self.text_buffer = self.session.notes.clone();
                 self.editing_text = true;
             }
+            Field::Link => {
+                self.text_buffer = self.session.link.clone();
+                self.editing_text = true;
+            }
         }
     }
 
@@ -296,6 +305,10 @@ impl SessionEditForm {
                 self.session.notes = self.text_buffer.clone();
                 true
             }
+            Field::Link => {
+                self.session.link = self.text_buffer.clone();
+                true
+            }
         }
     }
 
@@ -323,6 +336,11 @@ impl SessionEditForm {
             } else {
                 Some(self.session.notes.clone())
             },
+            link: if self.session.link.is_empty() {
+                None
+            } else {
+                Some(self.session.link.clone())
+            },
         })
     }
 
@@ -332,7 +350,7 @@ impl SessionEditForm {
             .margin(2)
             .constraints([
                 Constraint::Length(3),
-                Constraint::Length(if self.error_message.is_some() { 8 } else { 6 }),
+                Constraint::Length(if self.error_message.is_some() { 10 } else { 8 }),
                 Constraint::Length(3),
             ])
             .split(f.size());
@@ -493,6 +511,14 @@ impl SessionEditForm {
                     self.session.notes.clone()
                 };
                 ("Notes".to_string(), display)
+            }
+            Field::Link => {
+                let display = if self.session.link.is_empty() {
+                    "(none)".to_string()
+                } else {
+                    self.session.link.clone()
+                };
+                ("Link".to_string(), display)
             }
         }
     }

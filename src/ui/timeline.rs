@@ -1,4 +1,4 @@
-use crate::clipboard::{copy_to_clipboard, resolve_note_path};
+use crate::clipboard::{copy_to_clipboard, resolve_link_path};
 use crate::models::EmQuadrant;
 use crate::services::TimeBlock;
 use chrono::{Local, NaiveDate, TimeZone, Timelike};
@@ -324,8 +324,8 @@ impl TimelineView {
     fn copy_selected_session_note(&mut self) {
         if let Some((block_idx, _)) = self.get_selected_session() {
             if let Some(block) = self.blocks.get(block_idx) {
-                if let Some(note) = &block.note {
-                    match resolve_note_path(note) {
+                if let Some(note) = &block.link {
+                    match resolve_link_path(note) {
                         Some(path) => match copy_to_clipboard(&path) {
                             Ok(()) => {
                                 self.status_message = Some(format!("Copied: {}", path));
@@ -339,7 +339,7 @@ impl TimelineView {
                         }
                     }
                 } else {
-                    self.status_message = Some("No note for this session".to_string());
+                    self.status_message = Some("No link for this session".to_string());
                 }
             }
         }
@@ -348,8 +348,8 @@ impl TimelineView {
     fn copy_selected_filtered_session_note(&mut self) {
         if let Some((block_idx, _)) = self.get_selected_filtered_session() {
             if let Some(block) = self.blocks.get(block_idx) {
-                if let Some(note) = &block.note {
-                    match resolve_note_path(note) {
+                if let Some(note) = &block.link {
+                    match resolve_link_path(note) {
                         Some(path) => match copy_to_clipboard(&path) {
                             Ok(()) => {
                                 self.status_message = Some(format!("Copied: {}", path));
@@ -363,7 +363,7 @@ impl TimelineView {
                         }
                     }
                 } else {
-                    self.status_message = Some("No note for this session".to_string());
+                    self.status_message = Some("No link for this session".to_string());
                 }
             }
         }
@@ -618,7 +618,7 @@ impl TimelineView {
         let em_tag = task.em_quadrant().tag().to_string();
         let color = quadrant_color(&block.quadrant?);
         let name = task.name.clone();
-        let note = block.note.clone();
+        let link = block.link.clone();
 
         let is_selected = block.session_id.is_some() && block.session_id == selected_session_id;
 
@@ -650,9 +650,9 @@ impl TimelineView {
             Span::styled(em_tag, Style::default().fg(Color::DarkGray)),
         ];
 
-        if let Some(note_text) = note {
+        if let Some(link_text) = link {
             spans.push(Span::raw("  "));
-            spans.push(Span::styled(note_text, Style::default().fg(Color::Magenta)));
+            spans.push(Span::styled(link_text, Style::default().fg(Color::Magenta)));
         }
 
         Some(Line::from(spans))
@@ -879,7 +879,7 @@ mod tests {
             end: Some(end),
             task: None,
             quadrant: None,
-            note: None,
+            link: None,
         };
 
         assert_eq!(block.duration_seconds(), Some(3600));
@@ -910,7 +910,7 @@ mod tests {
                 end: Some(now + chrono::Duration::minutes(30)),
                 task: None,
                 quadrant: None,
-                note: None,
+                link: None,
             },
             TimeBlock {
                 session_id: Some(1),
@@ -918,7 +918,7 @@ mod tests {
                 end: Some(now + chrono::Duration::hours(1)),
                 task: Some(create_test_task(1, "task-1")),
                 quadrant: Some(EmQuadrant::Schedule),
-                note: None,
+                link: None,
             },
             TimeBlock {
                 session_id: None,
@@ -926,7 +926,7 @@ mod tests {
                 end: Some(now + chrono::Duration::hours(2)),
                 task: None,
                 quadrant: None,
-                note: None,
+                link: None,
             },
             TimeBlock {
                 session_id: Some(2),
@@ -934,7 +934,7 @@ mod tests {
                 end: Some(now + chrono::Duration::hours(3)),
                 task: Some(create_test_task(2, "task-2")),
                 quadrant: Some(EmQuadrant::DoFirst),
-                note: None,
+                link: None,
             },
         ]
     }
@@ -995,7 +995,7 @@ mod tests {
             end: Some(now + chrono::Duration::hours(1)),
             task: None,
             quadrant: None,
-            note: None,
+            link: None,
         }];
 
         let view = TimelineView::new(blocks, Utc::now().date_naive());

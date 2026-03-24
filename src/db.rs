@@ -148,7 +148,7 @@ fn run_migrations(conn: &Connection) -> Result<()> {
             start_time TEXT NOT NULL,
             end_time TEXT,
             notes TEXT,
-            note TEXT,
+            link TEXT,
             created_at TEXT NOT NULL DEFAULT (datetime('now'))
         );
 
@@ -167,6 +167,18 @@ fn run_migrations(conn: &Connection) -> Result<()> {
         "#,
     )?;
 
+    let link_column_exists: bool = conn
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('sessions') WHERE name='link')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+
+    if !link_column_exists {
+        conn.execute("ALTER TABLE sessions ADD COLUMN link TEXT", [])?;
+    }
+
     let note_column_exists: bool = conn
         .query_row(
             "SELECT EXISTS (SELECT 1 FROM pragma_table_info('sessions') WHERE name='note')",
@@ -175,8 +187,9 @@ fn run_migrations(conn: &Connection) -> Result<()> {
         )
         .unwrap_or(false);
 
-    if !note_column_exists {
-        conn.execute("ALTER TABLE sessions ADD COLUMN note TEXT", [])?;
+    if note_column_exists && !link_column_exists {
+        conn.execute("UPDATE sessions SET link = note WHERE note IS NOT NULL", [])?;
+        conn.execute("ALTER TABLE sessions DROP COLUMN note", [])?;
     }
 
     Ok(())

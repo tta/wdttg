@@ -60,7 +60,7 @@ WDTTG_DB=/tmp/test.db wdttg <command>
 Environment variables (can be set via `.env` file):
 
 - `WDTTG_DB`: Database path (default: `~/.local/share/wdttg/wdttg.db`)
-- `WDTTG_VAULT`: Obsidian vault path (for note integration)
+- `WDTTG_VAULT`: Obsidian vault path (for link resolution)
 
 ## Project Structure
 

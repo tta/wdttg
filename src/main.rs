@@ -44,9 +44,14 @@ fn handle_edit_session(session_id: i64, db: &Arc<Database>) -> Result<bool, Stri
     let result = edit_session(session, task.name.clone()).map_err(|e| e.to_string())?;
 
     match result {
-        SessionEditResult::Saved { start, end, notes } => {
+        SessionEditResult::Saved {
+            start,
+            end,
+            notes,
+            link,
+        } => {
             session_service
-                .update_full(session_id, start, end, notes)
+                .update_full(session_id, start, end, notes, link)
                 .map_err(|e| e.to_string())?;
             println!("Session updated");
             Ok(true)
@@ -74,7 +79,7 @@ fn prompt_em_quadrant() -> Option<EmQuadrant> {
 fn handle_start(
     query: Option<&str>,
     em_arg: Option<&str>,
-    note_arg: Option<&str>,
+    link_arg: Option<&str>,
     no_prompt: bool,
     db: &Arc<Database>,
 ) -> Result<(), String> {
@@ -159,7 +164,7 @@ fn handle_start(
     }
 
     let session = session_service
-        .start(task.id, note_arg)
+        .start(task.id, link_arg)
         .map_err(|e| e.to_string())?;
 
     let updated_task = task_service.get_by_id(task.id).unwrap().unwrap();
@@ -526,7 +531,7 @@ fn handle_log(
     start_arg: Option<&str>,
     end_arg: Option<&str>,
     em_arg: Option<&str>,
-    note_arg: Option<&str>,
+    link_arg: Option<&str>,
     no_prompt: bool,
     db: &Arc<Database>,
 ) -> Result<(), String> {
@@ -659,7 +664,7 @@ fn handle_log(
     };
 
     let session = session_service
-        .log_session(task.id, start, end, note_arg)
+        .log_session(task.id, start, end, link_arg)
         .map_err(|e| e.to_string())?;
 
     let duration = end - start;
@@ -1048,10 +1053,10 @@ fn main() {
     };
 
     let result = match cli.command {
-        Commands::Start { query, em, note } => handle_start(
+        Commands::Start { query, em, link } => handle_start(
             query.as_deref(),
             em.as_deref(),
-            note.as_deref(),
+            link.as_deref(),
             cli.no_prompt,
             &db,
         ),
@@ -1082,13 +1087,13 @@ fn main() {
             start,
             end,
             em,
-            note,
+            link,
         } => handle_log(
             task.as_deref(),
             start.as_deref(),
             end.as_deref(),
             em.as_deref(),
-            note.as_deref(),
+            link.as_deref(),
             cli.no_prompt,
             &db,
         ),
