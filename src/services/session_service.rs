@@ -664,34 +664,23 @@ impl SessionService {
         start: NaiveDate,
         end: NaiveDate,
     ) -> Result<Vec<crate::models::QuadrantTime>> {
-        use crate::models::EmQuadrant;
+        use crate::models::QuadrantTime;
+        use std::collections::HashMap;
 
-        let conn = self.db.connection();
+        let split_times = self.get_split_times(start, end)?;
 
-        let start_str = format!("{} 00:00:00", start.format("%Y-%m-%d"));
-        let end_str = format!("{} 23:59:59", end.format("%Y-%m-%d"));
+        let mut by_quadrant: HashMap<crate::models::EmQuadrant, i64> = HashMap::new();
+        for st in split_times {
+            *by_quadrant.entry(st.em_quadrant).or_insert(0) += st.split_seconds;
+        }
 
-        let mut stmt = conn.prepare(
-            "SELECT t.em_urgent, t.em_important, SUM(strftime('%s', s.end_time) - strftime('%s', s.start_time)) as total_seconds
-             FROM sessions s
-             INNER JOIN tasks t ON s.task_id = t.id
-             WHERE s.start_time >= ?1 AND s.start_time <= ?2 AND s.end_time IS NOT NULL
-             GROUP BY t.em_urgent, t.em_important",
-        )?;
-
-        let results = stmt
-            .query_map(params![start_str, end_str], |row| {
-                let em_urgent: i32 = row.get(0)?;
-                let em_important: i32 = row.get(1)?;
-                let total_seconds: i64 = row.get(2)?;
-
-                let quadrant = EmQuadrant::new(em_urgent != 0, em_important != 0);
-                Ok(crate::models::QuadrantTime {
-                    quadrant,
-                    total_seconds,
-                })
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let results: Vec<QuadrantTime> = by_quadrant
+            .into_iter()
+            .map(|(quadrant, total_seconds)| QuadrantTime {
+                quadrant,
+                total_seconds,
+            })
+            .collect();
 
         Ok(results)
     }
@@ -701,33 +690,35 @@ impl SessionService {
         start: NaiveDate,
         end: NaiveDate,
     ) -> Result<Vec<crate::models::TaskTime>> {
-        let conn = self.db.connection();
+        use crate::models::TaskTime;
+        use std::collections::HashMap;
 
-        let start_str = format!("{} 00:00:00", start.format("%Y-%m-%d"));
-        let end_str = format!("{} 23:59:59", end.format("%Y-%m-%d"));
+        let split_times = self.get_split_times(start, end)?;
 
-        let mut stmt = conn.prepare(
-            "SELECT t.name, SUM(strftime('%s', s.end_time) - strftime('%s', s.start_time)) as total_seconds, COUNT(s.id) as session_count, t.em_urgent, t.em_important
-             FROM sessions s
-             INNER JOIN tasks t ON s.task_id = t.id
-             WHERE s.start_time >= ?1 AND s.start_time <= ?2 AND s.end_time IS NOT NULL
-             GROUP BY t.id, t.name, t.em_urgent, t.em_important
-             ORDER BY total_seconds DESC",
-        )?;
+        let mut by_task: HashMap<i64, (String, i64, i64, crate::models::EmQuadrant)> =
+            HashMap::new();
+        for st in split_times {
+            let entry =
+                by_task
+                    .entry(st.task_id)
+                    .or_insert((st.task_name.clone(), 0, 0, st.em_quadrant));
+            entry.1 += st.split_seconds;
+            entry.2 += 1;
+        }
 
-        let results = stmt
-            .query_map(params![start_str, end_str], |row| {
-                let em_urgent: i32 = row.get(3)?;
-                let em_important: i32 = row.get(4)?;
-                Ok(crate::models::TaskTime {
-                    task_name: row.get(0)?,
-                    total_seconds: row.get(1)?,
-                    session_count: row.get(2)?,
-                    em_quadrant: crate::models::EmQuadrant::new(em_urgent != 0, em_important != 0),
-                })
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let mut results: Vec<TaskTime> = by_task
+            .into_iter()
+            .map(
+                |(_, (task_name, total_seconds, session_count, em_quadrant))| TaskTime {
+                    task_name,
+                    total_seconds,
+                    session_count,
+                    em_quadrant,
+                },
+            )
+            .collect();
 
+        results.sort_by(|a, b| b.total_seconds.cmp(&a.total_seconds));
         Ok(results)
     }
 
