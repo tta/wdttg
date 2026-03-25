@@ -17,6 +17,7 @@ use ratatui::{
     widgets::{Block, Borders, Paragraph},
     Frame, Terminal,
 };
+use std::collections::HashSet;
 use std::io;
 use std::time::Duration;
 use thiserror::Error;
@@ -97,6 +98,7 @@ pub struct TimelineView {
     filtered_session_blocks: Vec<(usize, i64)>,
     filtered_selected_index: usize,
     status_message: Option<String>,
+    overlapping_session_ids: HashSet<i64>,
 }
 
 impl TimelineView {
@@ -113,6 +115,8 @@ impl TimelineView {
             })
             .collect();
 
+        let overlapping_session_ids = detect_overlapping_sessions(&blocks);
+
         Self {
             blocks,
             date,
@@ -125,6 +129,7 @@ impl TimelineView {
             filtered_session_blocks: session_blocks,
             filtered_selected_index: 0,
             status_message: None,
+            overlapping_session_ids,
         }
     }
 
@@ -503,18 +508,14 @@ impl TimelineView {
         let (start_hour, end_hour) = self.zoom.time_range();
         let total_hours = (end_hour - start_hour) as f64;
         let mins_per_char = (total_hours * 60.0) / width as f64;
-        let mut positions: Vec<Option<(Color, char)>> = vec![None; width];
+        let mut positions: Vec<(bool, Option<Color>)> = vec![(false, None); width];
 
         for block in &self.blocks {
             if block.is_gap() {
                 continue;
             }
 
-            let quadrant = match &block.quadrant {
-                Some(q) => q,
-                None => continue,
-            };
-            let color = quadrant_color(quadrant);
+            let color = block.quadrant.as_ref().map(quadrant_color);
 
             let local_start = Local.from_utc_datetime(&block.start.naive_utc());
             let local_end = block.end.map(|e| Local.from_utc_datetime(&e.naive_utc()));
@@ -537,7 +538,11 @@ impl TimelineView {
             let end_idx = ((visible_end / mins_per_char) as usize).min(width);
 
             for pos in &mut positions[start_idx..end_idx] {
-                *pos = Some((color, '█'));
+                if pos.1.is_some() {
+                    pos.0 = true;
+                } else {
+                    pos.1 = color;
+                }
             }
         }
 
@@ -545,27 +550,33 @@ impl TimelineView {
         let mut current_color: Option<Color> = None;
         let mut current_chars = String::new();
 
-        for pos in positions {
-            match pos {
-                Some((color, ch)) => {
-                    if current_color == Some(color) {
-                        current_chars.push(ch);
+        for (has_overlap, color) in positions {
+            let target_color = if has_overlap {
+                Some(OVERLAP_COLOR)
+            } else {
+                color
+            };
+
+            match target_color {
+                Some(c) => {
+                    if current_color == Some(c) {
+                        current_chars.push('█');
                     } else {
                         if !current_chars.is_empty() {
                             let style = current_color
-                                .map(|c| Style::default().fg(c))
+                                .map(|col| Style::default().fg(col))
                                 .unwrap_or_default();
                             spans.push(Span::styled(std::mem::take(&mut current_chars), style));
                         }
-                        current_color = Some(color);
-                        current_chars.push(ch);
+                        current_color = Some(c);
+                        current_chars.push('█');
                     }
                 }
                 None => {
                     if current_color.is_some() {
                         if !current_chars.is_empty() {
                             let style = current_color
-                                .map(|c| Style::default().fg(c))
+                                .map(|col| Style::default().fg(col))
                                 .unwrap_or_default();
                             spans.push(Span::styled(std::mem::take(&mut current_chars), style));
                         }
@@ -660,6 +671,16 @@ impl TimelineView {
             ));
         }
 
+        let is_overlapping = block
+            .session_id
+            .map(|id| self.overlapping_session_ids.contains(&id))
+            .unwrap_or(false);
+
+        if is_overlapping {
+            spans.push(Span::raw(" "));
+            spans.push(Span::styled("⚡", Style::default().fg(Color::Yellow)));
+        }
+
         if let Some(link_text) = link {
             spans.push(Span::raw("  "));
             spans.push(Span::styled(link_text, Style::default().fg(Color::Magenta)));
@@ -730,6 +751,32 @@ pub fn quadrant_color(quadrant: &EmQuadrant) -> Color {
     }
 }
 
+const OVERLAP_COLOR: Color = Color::Magenta;
+
+fn detect_overlapping_sessions(blocks: &[TimeBlock]) -> HashSet<i64> {
+    let mut overlapping = HashSet::new();
+    let sessions: Vec<&TimeBlock> = blocks.iter().filter(|b| !b.is_gap()).collect();
+
+    for (i, a) in sessions.iter().enumerate() {
+        for b in sessions.iter().skip(i + 1) {
+            if let (Some(a_end), Some(b_end)) = (a.end, b.end) {
+                let overlap_start = a.start.max(b.start);
+                let overlap_end = a_end.min(b_end);
+                if overlap_start < overlap_end {
+                    if let Some(id) = a.session_id {
+                        overlapping.insert(id);
+                    }
+                    if let Some(id) = b.session_id {
+                        overlapping.insert(id);
+                    }
+                }
+            }
+        }
+    }
+
+    overlapping
+}
+
 fn format_duration(seconds: i64) -> String {
     let hours = seconds / 3600;
     let minutes = (seconds % 3600) / 60;
@@ -751,6 +798,8 @@ pub fn print_timeline_static(blocks: &[TimeBlock], date: NaiveDate) {
 
     println!("{}", "─".repeat(width));
 
+    let overlapping = detect_overlapping_sessions(blocks);
+
     let mut session_blocks: Vec<&TimeBlock> = blocks.iter().filter(|b| !b.is_gap()).collect();
     session_blocks.sort_by(|a, b| b.start.cmp(&a.start));
 
@@ -767,9 +816,19 @@ pub fn print_timeline_static(blocks: &[TimeBlock], date: NaiveDate) {
                     .unwrap_or_else(|| "active".to_string());
                 let em_tag = task.em_quadrant().tag();
                 let bg_indicator = if block.is_background { " [bg]" } else { "" };
+                let overlap_indicator = block
+                    .session_id
+                    .map(|id| {
+                        if overlapping.contains(&id) {
+                            " ⚡"
+                        } else {
+                            ""
+                        }
+                    })
+                    .unwrap_or("");
                 println!(
-                    "{} [{}]  {} {}{}",
-                    time_str, duration_str, task.name, em_tag, bg_indicator
+                    "{} [{}]  {} {}{}{}",
+                    time_str, duration_str, task.name, em_tag, bg_indicator, overlap_indicator
                 );
             }
         }
@@ -787,12 +846,14 @@ pub fn print_timeline_static(blocks: &[TimeBlock], date: NaiveDate) {
 
 fn print_24h_bar_static(blocks: &[TimeBlock], width: usize) {
     let mins_per_char = (24.0 * 60.0) / width as f64;
-    let mut bar: Vec<char> = vec![' '; width];
+    let mut positions: Vec<(bool, Option<Color>)> = vec![(false, None); width];
 
     for block in blocks {
         if block.is_gap() {
             continue;
         }
+
+        let color = block.quadrant.as_ref().map(quadrant_color);
 
         let local_start = Local.from_utc_datetime(&block.start.naive_utc());
         let local_end = block.end.map(|e| Local.from_utc_datetime(&e.naive_utc()));
@@ -805,13 +866,56 @@ fn print_24h_bar_static(blocks: &[TimeBlock], width: usize) {
         let end_idx = ((end_mins / mins_per_char) as usize).min(width);
 
         if start_idx < end_idx {
-            for ch in &mut bar[start_idx..end_idx] {
-                *ch = '█';
+            for pos in &mut positions[start_idx..end_idx] {
+                if pos.1.is_some() {
+                    pos.0 = true;
+                } else {
+                    pos.1 = color;
+                }
             }
         }
     }
 
-    println!("{}", bar.into_iter().collect::<String>());
+    let mut result = String::new();
+    let mut current_color: Option<Color> = None;
+
+    for (has_overlap, color) in positions {
+        let target_color = if has_overlap {
+            Some(OVERLAP_COLOR)
+        } else {
+            color
+        };
+
+        if current_color != target_color {
+            if current_color.is_some() {
+                result.push_str("\x1b[0m");
+            }
+            if let Some(c) = target_color {
+                result.push_str(color_to_ansi(c));
+            }
+            current_color = target_color;
+        }
+        result.push('█');
+    }
+
+    if current_color.is_some() {
+        result.push_str("\x1b[0m");
+    }
+
+    println!("{}", result);
+}
+
+fn color_to_ansi(color: Color) -> &'static str {
+    match color {
+        Color::Red => "\x1b[31m",
+        Color::Green => "\x1b[32m",
+        Color::Yellow => "\x1b[33m",
+        Color::DarkGray => "\x1b[90m",
+        Color::Magenta => "\x1b[35m",
+        Color::Cyan => "\x1b[36m",
+        Color::White => "\x1b[37m",
+        _ => "\x1b[0m",
+    }
 }
 
 fn print_hour_markers_static(width: usize) {
@@ -1108,5 +1212,93 @@ mod tests {
         view.search_query = "   ".to_string();
         view.delete_last_word();
         assert_eq!(view.search_query, "");
+    }
+
+    #[test]
+    fn test_detect_overlapping_sessions_no_overlap() {
+        let now = Utc::now();
+        let blocks = vec![
+            TimeBlock {
+                session_id: Some(1),
+                start: now,
+                end: Some(now + chrono::Duration::hours(1)),
+                task: Some(create_test_task(1, "task-1")),
+                quadrant: Some(EmQuadrant::Schedule),
+                link: None,
+                is_background: false,
+            },
+            TimeBlock {
+                session_id: Some(2),
+                start: now + chrono::Duration::hours(1),
+                end: Some(now + chrono::Duration::hours(2)),
+                task: Some(create_test_task(2, "task-2")),
+                quadrant: Some(EmQuadrant::DoFirst),
+                link: None,
+                is_background: false,
+            },
+        ];
+
+        let overlapping = detect_overlapping_sessions(&blocks);
+        assert!(overlapping.is_empty());
+    }
+
+    #[test]
+    fn test_detect_overlapping_sessions_full_overlap() {
+        let now = Utc::now();
+        let blocks = vec![
+            TimeBlock {
+                session_id: Some(1),
+                start: now,
+                end: Some(now + chrono::Duration::hours(2)),
+                task: Some(create_test_task(1, "bg-task")),
+                quadrant: Some(EmQuadrant::Schedule),
+                link: None,
+                is_background: true,
+            },
+            TimeBlock {
+                session_id: Some(2),
+                start: now,
+                end: Some(now + chrono::Duration::hours(2)),
+                task: Some(create_test_task(2, "fg-task")),
+                quadrant: Some(EmQuadrant::DoFirst),
+                link: None,
+                is_background: false,
+            },
+        ];
+
+        let overlapping = detect_overlapping_sessions(&blocks);
+        assert_eq!(overlapping.len(), 2);
+        assert!(overlapping.contains(&1));
+        assert!(overlapping.contains(&2));
+    }
+
+    #[test]
+    fn test_detect_overlapping_sessions_partial_overlap() {
+        let now = Utc::now();
+        let blocks = vec![
+            TimeBlock {
+                session_id: Some(1),
+                start: now,
+                end: Some(now + chrono::Duration::hours(1)),
+                task: Some(create_test_task(1, "bg-task")),
+                quadrant: Some(EmQuadrant::Schedule),
+                link: None,
+                is_background: true,
+            },
+            TimeBlock {
+                session_id: Some(2),
+                start: now + chrono::Duration::minutes(30),
+                end: Some(now + chrono::Duration::hours(1) + chrono::Duration::minutes(30)),
+                task: Some(create_test_task(2, "fg-task")),
+                quadrant: Some(EmQuadrant::DoFirst),
+                link: None,
+                is_background: false,
+            },
+        ];
+
+        let overlapping = detect_overlapping_sessions(&blocks);
+        assert_eq!(overlapping.len(), 2);
+        assert!(overlapping.contains(&1));
+        assert!(overlapping.contains(&2));
     }
 }
