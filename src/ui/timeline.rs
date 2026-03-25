@@ -681,7 +681,7 @@ impl TimelineView {
                 Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
                 Span::raw(" Edit  "),
                 Span::styled("[O]", Style::default().fg(Color::Yellow)),
-                Span::raw(" Open Note  "),
+                Span::raw(" Open Link  "),
                 Span::styled("[1-3/A]", Style::default().fg(Color::Yellow)),
                 Span::raw(" Zoom  "),
                 Span::styled("[/]", Style::default().fg(Color::Yellow)),

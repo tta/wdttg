@@ -2,6 +2,7 @@ use clap::CommandFactory;
 use clap_complete::{generate, shells::Shell};
 use std::io::IsTerminal;
 use std::sync::Arc;
+use textwrap::wrap;
 use wdttg::ui::{
     edit_session, edit_task, print_timeline_static, select_em_quadrant, EditFormResult,
     EmSelectorResult, PickerResult, SessionEditResult, TaskPicker, TimelineView,
@@ -764,17 +765,32 @@ fn handle_report_task(period: &str, db: &Arc<Database>) -> Result<(), String> {
             0.0
         };
         let color = quadrant_ansi_color(&tt.em_quadrant);
-        println!(
-            "{}{:<30}{} {:>10} ({:>5.1}%) {} session{}  {}",
-            color,
-            tt.task_name,
-            ANSI_RESET,
-            format_duration(chrono::Duration::seconds(tt.total_seconds)),
-            percentage,
+        let session_str = format!(
+            "{:>3} {:<8}",
             tt.session_count,
-            if tt.session_count == 1 { "" } else { "s" },
-            tt.em_quadrant.tag()
+            if tt.session_count == 1 {
+                "session"
+            } else {
+                "sessions"
+            }
         );
+        let lines = wrap(&tt.task_name, 30);
+        for (i, line) in lines.iter().enumerate() {
+            if i == 0 {
+                println!(
+                    "{}{:<30}{} {:>10} ({:>5.1}%) {}  {}",
+                    color,
+                    line,
+                    ANSI_RESET,
+                    format_duration(chrono::Duration::seconds(tt.total_seconds)),
+                    percentage,
+                    session_str,
+                    tt.em_quadrant.tag()
+                );
+            } else {
+                println!("{}  {}{}", color, line, ANSI_RESET);
+            }
+        }
     }
 
     println!("{}", "-".repeat(70));
@@ -812,12 +828,19 @@ fn handle_report_tag(period: &str, db: &Arc<Database>) -> Result<(), String> {
         } else {
             0.0
         };
-        println!(
-            "#{:<29} {:>10} ({:>5.1}%)",
-            tt.tag,
-            format_duration(chrono::Duration::seconds(tt.total_seconds)),
-            percentage
-        );
+        let lines = wrap(&tt.tag, 29);
+        for (i, line) in lines.iter().enumerate() {
+            if i == 0 {
+                println!(
+                    "#{:<29} {:>10} ({:>5.1}%)",
+                    line,
+                    format_duration(chrono::Duration::seconds(tt.total_seconds)),
+                    percentage
+                );
+            } else {
+                println!("  {}", line);
+            }
+        }
     }
 
     println!("{}", "-".repeat(50));

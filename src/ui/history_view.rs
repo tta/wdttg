@@ -586,7 +586,7 @@ impl HistoryView {
                 Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
                 Span::raw(" Edit  "),
                 Span::styled("[O]", Style::default().fg(Color::Yellow)),
-                Span::raw(" Open Note  "),
+                Span::raw(" Open Link  "),
                 Span::styled("[/]", Style::default().fg(Color::Yellow)),
                 Span::raw(" Search  "),
                 Span::styled("[Q/Esc]", Style::default().fg(Color::Yellow)),
