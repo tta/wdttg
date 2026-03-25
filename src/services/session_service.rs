@@ -15,6 +15,8 @@ pub enum SessionServiceError {
     TaskNotFound(i64),
     #[error("Invalid time range: end time must be after start time")]
     InvalidTimeRange,
+    #[error("A background task is already running. Stop it first with 'wdttg stop --bg'")]
+    BackgroundAlreadyRunning,
 }
 
 pub type Result<T> = std::result::Result<T, SessionServiceError>;
@@ -54,7 +56,7 @@ impl SessionService {
         let tx = conn.unchecked_transaction()?;
 
         conn.execute(
-            "UPDATE sessions SET end_time = datetime('now') WHERE end_time IS NULL",
+            "UPDATE sessions SET end_time = datetime('now') WHERE end_time IS NULL AND is_background = 0",
             [],
         )?;
 
@@ -77,7 +79,7 @@ impl SessionService {
 
         let active_id: Option<i64> = conn
             .query_row(
-                "SELECT id FROM sessions WHERE end_time IS NULL ORDER BY start_time DESC LIMIT 1",
+                "SELECT id FROM sessions WHERE end_time IS NULL AND is_background = 0 ORDER BY start_time DESC LIMIT 1",
                 [],
                 |row| row.get(0),
             )
@@ -116,6 +118,227 @@ impl SessionService {
             Ok(session) => Ok(Some(session)),
             Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
             Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn get_active_foreground(&self) -> Result<Option<SessionWithTask>> {
+        let conn = self.db.connection();
+
+        let result = conn.query_row(
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.created_at,
+                    t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
+             FROM sessions s
+             INNER JOIN tasks t ON s.task_id = t.id
+             WHERE s.end_time IS NULL AND s.is_background = 0
+             ORDER BY s.start_time DESC
+             LIMIT 1",
+            [],
+            |row| self.row_to_session_with_task(row),
+        );
+
+        match result {
+            Ok(session) => Ok(Some(session)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn get_active_background(&self) -> Result<Option<SessionWithTask>> {
+        let conn = self.db.connection();
+
+        let result = conn.query_row(
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.created_at,
+                    t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
+             FROM sessions s
+             INNER JOIN tasks t ON s.task_id = t.id
+             WHERE s.end_time IS NULL AND s.is_background = 1
+             ORDER BY s.start_time DESC
+             LIMIT 1",
+            [],
+            |row| self.row_to_session_with_task(row),
+        );
+
+        match result {
+            Ok(session) => Ok(Some(session)),
+            Err(rusqlite::Error::QueryReturnedNoRows) => Ok(None),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    pub fn start_background(&self, task_id: i64, link: Option<&str>) -> Result<Session> {
+        let conn = self.db.connection();
+
+        let existing: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM sessions WHERE end_time IS NULL AND is_background = 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        if existing.is_some() {
+            return Err(SessionServiceError::BackgroundAlreadyRunning);
+        }
+
+        conn.execute(
+            "INSERT INTO sessions (task_id, start_time, link, is_background) VALUES (?1, datetime('now'), ?2, 1)",
+            params![task_id, link],
+        )?;
+
+        let id = conn.last_insert_rowid();
+        drop(conn);
+        self.get_by_id(id)?.ok_or(SessionServiceError::NotFound(id))
+    }
+
+    pub fn stop_background(&self) -> Result<Option<Session>> {
+        let conn = self.db.connection();
+
+        let active_id: Option<i64> = conn
+            .query_row(
+                "SELECT id FROM sessions WHERE end_time IS NULL AND is_background = 1 ORDER BY start_time DESC LIMIT 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+
+        let Some(id) = active_id else {
+            return Ok(None);
+        };
+
+        conn.execute(
+            "UPDATE sessions SET end_time = datetime('now') WHERE id = ?1",
+            params![id],
+        )?;
+
+        drop(conn);
+
+        self.get_by_id(id)
+    }
+
+    pub fn stop_all(&self) -> Result<(Option<Session>, Option<Session>)> {
+        let fg = self.stop()?;
+        let bg = self.stop_background()?;
+        Ok((fg, bg))
+    }
+
+    pub fn get_overlapping_sessions(
+        &self,
+        start: DateTime<Utc>,
+        end: DateTime<Utc>,
+    ) -> Result<Vec<SessionWithTask>> {
+        let conn = self.db.connection();
+
+        let start_str = format_sqlite_datetime(&start);
+        let end_str = format_sqlite_datetime(&end);
+
+        let mut stmt = conn.prepare(
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.created_at,
+                    t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
+             FROM sessions s
+             INNER JOIN tasks t ON s.task_id = t.id
+             WHERE s.start_time < ?2 
+               AND (s.end_time IS NULL OR s.end_time > ?1)
+             ORDER BY s.start_time ASC",
+        )?;
+
+        let sessions = stmt
+            .query_map(params![start_str, end_str], |row| {
+                self.row_to_session_with_task(row)
+            })?
+            .collect::<std::result::Result<Vec<_>, _>>()?;
+
+        Ok(sessions)
+    }
+
+    pub fn get_split_times(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<Vec<crate::models::SessionSplitTime>> {
+        use crate::models::SessionSplitTime;
+        use std::collections::HashMap;
+
+        let sessions = self.get_date_range(start, end)?;
+
+        if sessions.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let mut results: HashMap<i64, SessionSplitTime> = HashMap::new();
+
+        let foreground: Vec<_> = sessions
+            .iter()
+            .filter(|s| !s.session.is_background)
+            .collect();
+        let background: Vec<_> = sessions
+            .iter()
+            .filter(|s| s.session.is_background)
+            .collect();
+
+        for swt in &foreground {
+            let total = swt.session.duration_seconds().unwrap_or(0);
+            let mut overlap_total = 0i64;
+
+            for bg in &background {
+                if let Some(overlap) = Self::calculate_overlap(&swt.session, &bg.session) {
+                    overlap_total += overlap;
+                }
+            }
+
+            let split = total - overlap_total / 2;
+            results.insert(
+                swt.session.id,
+                SessionSplitTime {
+                    session_id: swt.session.id,
+                    task_id: swt.task.id,
+                    task_name: swt.task.name.clone(),
+                    em_quadrant: swt.task.em_quadrant(),
+                    total_seconds: total,
+                    split_seconds: split,
+                    overlap_seconds: overlap_total,
+                },
+            );
+        }
+
+        for bg in &background {
+            let total = bg.session.duration_seconds().unwrap_or(0);
+            let mut overlap_total = 0i64;
+
+            for fg in &foreground {
+                if let Some(overlap) = Self::calculate_overlap(&fg.session, &bg.session) {
+                    overlap_total += overlap;
+                }
+            }
+
+            let split = (total - overlap_total) + overlap_total / 2;
+            results.insert(
+                bg.session.id,
+                SessionSplitTime {
+                    session_id: bg.session.id,
+                    task_id: bg.task.id,
+                    task_name: bg.task.name.clone(),
+                    em_quadrant: bg.task.em_quadrant(),
+                    total_seconds: total,
+                    split_seconds: split,
+                    overlap_seconds: overlap_total,
+                },
+            );
+        }
+
+        Ok(results.into_values().collect())
+    }
+
+    fn calculate_overlap(a: &Session, b: &Session) -> Option<i64> {
+        let a_end = a.end_time?;
+        let b_end = b.end_time?;
+
+        let overlap_start = a.start_time.max(b.start_time);
+        let overlap_end = a_end.min(b_end);
+
+        if overlap_start < overlap_end {
+            Some((overlap_end - overlap_start).num_seconds())
+        } else {
+            None
         }
     }
 
@@ -1158,5 +1381,266 @@ mod tests {
             result.unwrap_err(),
             SessionServiceError::NotFound(9999)
         ));
+    }
+
+    #[test]
+    fn test_start_background_succeeds_when_none_running() {
+        let (session_service, task_service) = create_test_services();
+
+        let task = task_service.get_or_create("bg-task").unwrap();
+        let session = session_service.start_background(task.id, None).unwrap();
+
+        assert!(session.end_time.is_none());
+        assert!(session.is_background);
+        assert_eq!(session.task_id, task.id);
+    }
+
+    #[test]
+    fn test_start_background_fails_when_already_running() {
+        let (session_service, task_service) = create_test_services();
+
+        let task1 = task_service.get_or_create("bg-task-1").unwrap();
+        let task2 = task_service.get_or_create("bg-task-2").unwrap();
+
+        session_service.start_background(task1.id, None).unwrap();
+
+        let result = session_service.start_background(task2.id, None);
+        assert!(result.is_err());
+        assert!(matches!(
+            result.unwrap_err(),
+            SessionServiceError::BackgroundAlreadyRunning
+        ));
+    }
+
+    #[test]
+    fn test_start_foreground_does_not_stop_background() {
+        let (session_service, task_service) = create_test_services();
+
+        let bg_task = task_service.get_or_create("bg-task").unwrap();
+        let fg_task = task_service.get_or_create("fg-task").unwrap();
+
+        let bg_session = session_service.start_background(bg_task.id, None).unwrap();
+        assert!(bg_session.end_time.is_none());
+
+        let _fg_session = session_service.start(fg_task.id, None).unwrap();
+
+        let bg_after = session_service.get_by_id(bg_session.id).unwrap().unwrap();
+        assert!(bg_after.end_time.is_none());
+    }
+
+    #[test]
+    fn test_get_active_foreground_and_background() {
+        let (session_service, task_service) = create_test_services();
+
+        let bg_task = task_service.get_or_create("bg-task").unwrap();
+        let fg_task = task_service.get_or_create("fg-task").unwrap();
+
+        session_service.start_background(bg_task.id, None).unwrap();
+        session_service.start(fg_task.id, None).unwrap();
+
+        let fg = session_service.get_active_foreground().unwrap();
+        assert!(fg.is_some());
+        assert_eq!(fg.unwrap().task.name, "fg-task");
+
+        let bg = session_service.get_active_background().unwrap();
+        assert!(bg.is_some());
+        assert_eq!(bg.unwrap().task.name, "bg-task");
+    }
+
+    #[test]
+    fn test_stop_background_only() {
+        let (session_service, task_service) = create_test_services();
+
+        let bg_task = task_service.get_or_create("bg-task").unwrap();
+        let fg_task = task_service.get_or_create("fg-task").unwrap();
+
+        session_service.start_background(bg_task.id, None).unwrap();
+        session_service.start(fg_task.id, None).unwrap();
+
+        let stopped = session_service.stop_background().unwrap();
+        assert!(stopped.is_some());
+
+        let bg_after = session_service.get_active_background().unwrap();
+        assert!(bg_after.is_none());
+
+        let fg_after = session_service.get_active_foreground().unwrap();
+        assert!(fg_after.is_some());
+    }
+
+    #[test]
+    fn test_stop_all() {
+        let (session_service, task_service) = create_test_services();
+
+        let bg_task = task_service.get_or_create("bg-task").unwrap();
+        let fg_task = task_service.get_or_create("fg-task").unwrap();
+
+        session_service.start_background(bg_task.id, None).unwrap();
+        session_service.start(fg_task.id, None).unwrap();
+
+        let (fg, bg) = session_service.stop_all().unwrap();
+        assert!(fg.is_some());
+        assert!(bg.is_some());
+
+        assert!(session_service.get_active_foreground().unwrap().is_none());
+        assert!(session_service.get_active_background().unwrap().is_none());
+    }
+
+    #[test]
+    fn test_calculate_overlap_no_overlap() {
+        use chrono::TimeZone;
+
+        let task1 = crate::models::Task {
+            id: 1,
+            name: "task1".to_string(),
+            notes: None,
+            em_urgent: false,
+            em_important: false,
+            status: TaskStatus::Active,
+            recurring: false,
+            tags: vec![],
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+        let task2 = crate::models::Task {
+            id: 2,
+            name: "task2".to_string(),
+            notes: None,
+            em_urgent: false,
+            em_important: false,
+            status: TaskStatus::Active,
+            recurring: false,
+            tags: vec![],
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+        };
+
+        let session1 = Session {
+            id: 1,
+            task_id: task1.id,
+            start_time: Utc.with_ymd_and_hms(2024, 1, 1, 10, 0, 0).unwrap(),
+            end_time: Some(Utc.with_ymd_and_hms(2024, 1, 1, 11, 0, 0).unwrap()),
+            notes: None,
+            link: None,
+            is_background: false,
+            created_at: Utc::now(),
+        };
+
+        let session2 = Session {
+            id: 2,
+            task_id: task2.id,
+            start_time: Utc.with_ymd_and_hms(2024, 1, 1, 12, 0, 0).unwrap(),
+            end_time: Some(Utc.with_ymd_and_hms(2024, 1, 1, 13, 0, 0).unwrap()),
+            notes: None,
+            link: None,
+            is_background: true,
+            created_at: Utc::now(),
+        };
+
+        let overlap = SessionService::calculate_overlap(&session1, &session2);
+        assert!(overlap.is_none());
+    }
+
+    #[test]
+    fn test_calculate_overlap_with_overlap() {
+        use chrono::TimeZone;
+
+        let session1 = Session {
+            id: 1,
+            task_id: 1,
+            start_time: Utc.with_ymd_and_hms(2024, 1, 1, 9, 0, 0).unwrap(),
+            end_time: Some(Utc.with_ymd_and_hms(2024, 1, 1, 10, 0, 0).unwrap()),
+            notes: None,
+            link: None,
+            is_background: false,
+            created_at: Utc::now(),
+        };
+
+        let session2 = Session {
+            id: 2,
+            task_id: 2,
+            start_time: Utc.with_ymd_and_hms(2024, 1, 1, 9, 30, 0).unwrap(),
+            end_time: Some(Utc.with_ymd_and_hms(2024, 1, 1, 10, 0, 0).unwrap()),
+            notes: None,
+            link: None,
+            is_background: true,
+            created_at: Utc::now(),
+        };
+
+        let overlap = SessionService::calculate_overlap(&session1, &session2);
+        assert_eq!(overlap, Some(1800));
+    }
+
+    #[test]
+    fn test_get_split_times_single_overlap() {
+        use chrono::TimeZone;
+
+        let (session_service, task_service) = create_test_services();
+
+        let bg_task = task_service.get_or_create("bg-task").unwrap();
+        let fg_task = task_service.get_or_create("fg-task").unwrap();
+
+        let bg_start = Utc.with_ymd_and_hms(2024, 1, 1, 9, 0, 0).unwrap();
+        let bg_end = Utc.with_ymd_and_hms(2024, 1, 1, 10, 0, 0).unwrap();
+
+        let fg_start = Utc.with_ymd_and_hms(2024, 1, 1, 9, 30, 0).unwrap();
+        let fg_end = Utc.with_ymd_and_hms(2024, 1, 1, 10, 0, 0).unwrap();
+
+        let conn = session_service.db.connection();
+        conn.execute(
+            "INSERT INTO sessions (task_id, start_time, end_time, is_background) VALUES (?1, ?2, ?3, 1)",
+            params![bg_task.id, format_sqlite_datetime(&bg_start), format_sqlite_datetime(&bg_end)],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO sessions (task_id, start_time, end_time, is_background) VALUES (?1, ?2, ?3, 0)",
+            params![fg_task.id, format_sqlite_datetime(&fg_start), format_sqlite_datetime(&fg_end)],
+        ).unwrap();
+        drop(conn);
+
+        let date = bg_start.date_naive();
+        let split_times = session_service.get_split_times(date, date).unwrap();
+
+        assert_eq!(split_times.len(), 2);
+
+        let fg_split = split_times
+            .iter()
+            .find(|s| s.task_name == "fg-task")
+            .unwrap();
+        assert_eq!(fg_split.total_seconds, 1800);
+        assert_eq!(fg_split.overlap_seconds, 1800);
+        assert_eq!(fg_split.split_seconds, 900);
+
+        let bg_split = split_times
+            .iter()
+            .find(|s| s.task_name == "bg-task")
+            .unwrap();
+        assert_eq!(bg_split.total_seconds, 3600);
+        assert_eq!(bg_split.overlap_seconds, 1800);
+        assert_eq!(bg_split.split_seconds, 2700);
+    }
+
+    #[test]
+    fn test_get_overlapping_sessions() {
+        use chrono::TimeZone;
+
+        let (session_service, task_service) = create_test_services();
+
+        let task1 = task_service.get_or_create("existing-task").unwrap();
+
+        let existing_start = Utc.with_ymd_and_hms(2024, 1, 1, 9, 0, 0).unwrap();
+        let existing_end = Utc.with_ymd_and_hms(2024, 1, 1, 10, 0, 0).unwrap();
+
+        session_service
+            .log_session(task1.id, existing_start, existing_end, None)
+            .unwrap();
+
+        let new_start = Utc.with_ymd_and_hms(2024, 1, 1, 9, 30, 0).unwrap();
+        let new_end = Utc.with_ymd_and_hms(2024, 1, 1, 10, 30, 0).unwrap();
+
+        let overlaps = session_service
+            .get_overlapping_sessions(new_start, new_end)
+            .unwrap();
+
+        assert_eq!(overlaps.len(), 1);
+        assert_eq!(overlaps[0].task.name, "existing-task");
     }
 }
