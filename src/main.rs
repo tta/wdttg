@@ -202,25 +202,76 @@ fn handle_start(
 fn handle_status(db: &Arc<Database>) -> Result<(), String> {
     let session_service = SessionService::new(Arc::clone(db));
 
-    let active = session_service.get_active().map_err(|e| e.to_string())?;
+    let fg = session_service
+        .get_active_foreground()
+        .map_err(|e| e.to_string())?;
+    let bg = session_service
+        .get_active_background()
+        .map_err(|e| e.to_string())?;
 
-    match active {
-        Some(session_with_task) => {
-            let task = &session_with_task.task;
-            let session = &session_with_task.session;
-
+    match (fg, bg) {
+        (None, None) => {
+            println!("No active timer");
+        }
+        (Some(fg_only), None) => {
+            let task = &fg_only.task;
+            let session = &fg_only.session;
             let em_tag = task.em_quadrant().tag();
             let start_time = session.start_time.format("%H:%M");
-
             let now = chrono::Utc::now();
             let duration = now - session.start_time;
             let duration_str = format_duration(duration);
 
-            println!("Active: {} {}", task.name, em_tag);
+            println!("Foreground: {} {}", task.name, em_tag);
             println!("Started: {} ({} ago)", start_time, duration_str);
         }
-        None => {
-            println!("No active timer");
+        (None, Some(bg_only)) => {
+            let task = &bg_only.task;
+            let session = &bg_only.session;
+            let em_tag = task.em_quadrant().tag();
+            let start_time = session.start_time.format("%H:%M");
+            let now = chrono::Utc::now();
+            let duration = now - session.start_time;
+            let duration_str = format_duration(duration);
+
+            println!("Background: {} {}", task.name, em_tag);
+            println!("Started: {} ({} ago)", start_time, duration_str);
+        }
+        (Some(fg_sess), Some(bg_sess)) => {
+            let fg_task = &fg_sess.task;
+            let fg_session = &fg_sess.session;
+            let fg_em_tag = fg_task.em_quadrant().tag();
+            let fg_start = fg_session.start_time.format("%H:%M");
+            let now = chrono::Utc::now();
+            let fg_duration = now - fg_session.start_time;
+            let fg_duration_str = format_duration(fg_duration);
+
+            println!("Foreground: {} {}", fg_task.name, fg_em_tag);
+            println!("Started: {} ({} ago)", fg_start, fg_duration_str);
+
+            let bg_task = &bg_sess.task;
+            let bg_session = &bg_sess.session;
+            let bg_em_tag = bg_task.em_quadrant().tag();
+            let bg_start = bg_session.start_time.format("%H:%M");
+            let bg_duration = now - bg_session.start_time;
+            let bg_duration_str = format_duration(bg_duration);
+
+            println!();
+            println!("Background: {} {}", bg_task.name, bg_em_tag);
+            println!("Started: {} ({} ago)", bg_start, bg_duration_str);
+
+            let overlap_start = fg_session.start_time.max(bg_session.start_time);
+            let overlap_secs = (now - overlap_start).num_seconds();
+
+            if overlap_secs > 0 {
+                let overlap_mins = overlap_secs / 60;
+                let split_mins = overlap_mins / 2;
+                println!();
+                println!(
+                    "Overlap: {}m (time split {}m each)",
+                    overlap_mins, split_mins
+                );
+            }
         }
     }
 
