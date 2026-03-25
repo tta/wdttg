@@ -192,6 +192,25 @@ fn run_migrations(conn: &Connection) -> Result<()> {
         conn.execute("ALTER TABLE sessions DROP COLUMN note", [])?;
     }
 
+    let bg_column_exists: bool = conn
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('sessions') WHERE name='is_background')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+
+    if !bg_column_exists {
+        conn.execute(
+            "ALTER TABLE sessions ADD COLUMN is_background INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_sessions_bg ON sessions(is_background)",
+            [],
+        )?;
+    }
+
     Ok(())
 }
 
