@@ -621,6 +621,7 @@ impl TimelineView {
         let color = quadrant_color(&block.quadrant?);
         let name = task.name.clone();
         let link = block.link.clone();
+        let bg_indicator = if block.is_background { " [bg]" } else { "" };
 
         let is_selected = block.session_id.is_some() && block.session_id == selected_session_id;
 
@@ -651,6 +652,13 @@ impl TimelineView {
             Span::raw(" "),
             Span::styled(em_tag, Style::default().fg(Color::DarkGray)),
         ];
+
+        if !bg_indicator.is_empty() {
+            spans.push(Span::styled(
+                bg_indicator,
+                Style::default().fg(Color::Magenta),
+            ));
+        }
 
         if let Some(link_text) = link {
             spans.push(Span::raw("  "));
@@ -758,7 +766,11 @@ pub fn print_timeline_static(blocks: &[TimeBlock], date: NaiveDate) {
                     .map(format_duration)
                     .unwrap_or_else(|| "active".to_string());
                 let em_tag = task.em_quadrant().tag();
-                println!("{} [{}]  {} {}", time_str, duration_str, task.name, em_tag);
+                let bg_indicator = if block.is_background { " [bg]" } else { "" };
+                println!(
+                    "{} [{}]  {} {}{}",
+                    time_str, duration_str, task.name, em_tag, bg_indicator
+                );
             }
         }
     }
@@ -882,6 +894,7 @@ mod tests {
             task: None,
             quadrant: None,
             link: None,
+            is_background: false,
         };
 
         assert_eq!(block.duration_seconds(), Some(3600));
@@ -913,6 +926,7 @@ mod tests {
                 task: None,
                 quadrant: None,
                 link: None,
+                is_background: false,
             },
             TimeBlock {
                 session_id: Some(1),
@@ -921,6 +935,7 @@ mod tests {
                 task: Some(create_test_task(1, "task-1")),
                 quadrant: Some(EmQuadrant::Schedule),
                 link: None,
+                is_background: false,
             },
             TimeBlock {
                 session_id: None,
@@ -929,6 +944,7 @@ mod tests {
                 task: None,
                 quadrant: None,
                 link: None,
+                is_background: false,
             },
             TimeBlock {
                 session_id: Some(2),
@@ -937,6 +953,7 @@ mod tests {
                 task: Some(create_test_task(2, "task-2")),
                 quadrant: Some(EmQuadrant::DoFirst),
                 link: None,
+                is_background: false,
             },
         ]
     }
@@ -998,6 +1015,7 @@ mod tests {
             task: None,
             quadrant: None,
             link: None,
+            is_background: false,
         }];
 
         let view = TimelineView::new(blocks, Utc::now().date_naive());

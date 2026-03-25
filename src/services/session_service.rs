@@ -29,6 +29,7 @@ pub struct TimeBlock {
     pub task: Option<Task>,
     pub quadrant: Option<crate::models::EmQuadrant>,
     pub link: Option<String>,
+    pub is_background: bool,
 }
 
 impl TimeBlock {
@@ -509,6 +510,7 @@ impl SessionService {
                         task: None,
                         quadrant: None,
                         link: None,
+                        is_background: false,
                     });
                 }
             } else if swt.session.start_time > start_of_day {
@@ -519,6 +521,7 @@ impl SessionService {
                     task: None,
                     quadrant: None,
                     link: None,
+                    is_background: false,
                 });
             }
 
@@ -530,6 +533,7 @@ impl SessionService {
                 task: Some(swt.task),
                 quadrant: Some(quadrant),
                 link: swt.session.link.clone(),
+                is_background: swt.session.is_background,
             });
 
             last_end = Some(session_end);
@@ -544,6 +548,7 @@ impl SessionService {
                     task: None,
                     quadrant: None,
                     link: None,
+                    is_background: false,
                 });
             }
         }
