@@ -835,6 +835,43 @@ fn handle_log(
         return Err("End time cannot be in the future".to_string());
     }
 
+    let overlaps = session_service
+        .get_overlapping_sessions(start, end)
+        .map_err(|e| e.to_string())?;
+
+    if !overlaps.is_empty() && is_interactive() && !no_prompt {
+        println!("Warning: This session overlaps with:");
+        for overlap in &overlaps {
+            let end_display = overlap
+                .session
+                .end_time
+                .map(|e| e.format("%H:%M").to_string())
+                .unwrap_or_else(|| "now".to_string());
+            let bg_indicator = if overlap.session.is_background {
+                " [bg]"
+            } else {
+                ""
+            };
+            println!(
+                "  - {}{} ({} to {})",
+                overlap.task.name,
+                bg_indicator,
+                overlap.session.start_time.format("%H:%M"),
+                end_display
+            );
+        }
+        println!("Overlapping time will be split 50/50.");
+        print!("Continue? [Y/n] ");
+        use std::io::{self, Write};
+        io::stdout().flush().unwrap();
+        let mut input = String::new();
+        io::stdin().read_line(&mut input).unwrap();
+        if input.trim().to_lowercase() == "n" {
+            println!("Cancelled.");
+            return Ok(());
+        }
+    }
+
     let task = match selection {
         TaskSelection::Existing(t) => t,
         TaskSelection::NewTask { name } => {
