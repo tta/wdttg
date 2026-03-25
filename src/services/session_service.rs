@@ -101,7 +101,7 @@ impl SessionService {
         let conn = self.db.connection();
 
         let result = conn.query_row(
-            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.created_at,
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -191,7 +191,7 @@ impl SessionService {
         let conn = self.db.connection();
 
         let result = conn.query_row(
-            "SELECT id, task_id, start_time, end_time, notes, link, created_at FROM sessions WHERE id = ?1",
+            "SELECT id, task_id, start_time, end_time, notes, link, is_background, created_at FROM sessions WHERE id = ?1",
             params![id],
             |row| self.row_to_session(row),
         );
@@ -225,7 +225,7 @@ impl SessionService {
         let end_of_day = format_sqlite_datetime(&end_utc);
 
         let mut stmt = conn.prepare(
-            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.created_at,
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -332,7 +332,7 @@ impl SessionService {
         let conn = self.db.connection();
 
         let mut stmt = conn.prepare(
-            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.created_at,
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -351,7 +351,7 @@ impl SessionService {
         let conn = self.db.connection();
 
         let result = conn.query_row(
-            "SELECT id, task_id, start_time, end_time, notes, link, created_at 
+            "SELECT id, task_id, start_time, end_time, notes, link, is_background, created_at 
              FROM sessions 
              WHERE task_id = ?1 
              ORDER BY start_time DESC 
@@ -371,7 +371,7 @@ impl SessionService {
         let conn = self.db.connection();
 
         let result = conn.query_row(
-            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.created_at,
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -419,7 +419,7 @@ impl SessionService {
         let end_str = format!("{} 23:59:59", end.format("%Y-%m-%d"));
 
         let mut stmt = conn.prepare(
-            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.created_at,
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -587,7 +587,7 @@ impl SessionService {
         let end_str = format!("{} 23:59:59", end.format("%Y-%m-%d"));
 
         let mut stmt = conn.prepare(
-            "SELECT DISTINCT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.created_at,
+            "SELECT DISTINCT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -613,7 +613,8 @@ impl SessionService {
         let end_time_str: Option<String> = row.get(3)?;
         let notes: Option<String> = row.get(4)?;
         let link: Option<String> = row.get(5)?;
-        let created_at_str: String = row.get(6)?;
+        let is_background: i32 = row.get(6)?;
+        let created_at_str: String = row.get(7)?;
 
         let start_time = parse_sqlite_datetime(&start_time_str)?;
         let end_time = end_time_str
@@ -628,6 +629,7 @@ impl SessionService {
             end_time,
             notes,
             link,
+            is_background: is_background != 0,
             created_at,
         })
     }
@@ -638,19 +640,19 @@ impl SessionService {
     ) -> std::result::Result<SessionWithTask, rusqlite::Error> {
         let session = self.row_to_session(row)?;
 
-        let task_id: i64 = row.get(7)?;
-        let task_name: String = row.get(8)?;
-        let task_notes: Option<String> = row.get(9)?;
-        let em_urgent: i32 = row.get(10)?;
-        let em_important: i32 = row.get(11)?;
-        let status_str: String = row.get(12)?;
-        let recurring: i32 = row.get(13)?;
-        let task_created_at_str: String = row.get(14)?;
-        let task_updated_at_str: String = row.get(15)?;
+        let task_id: i64 = row.get(8)?;
+        let task_name: String = row.get(9)?;
+        let task_notes: Option<String> = row.get(10)?;
+        let em_urgent: i32 = row.get(11)?;
+        let em_important: i32 = row.get(12)?;
+        let status_str: String = row.get(13)?;
+        let recurring: i32 = row.get(14)?;
+        let task_created_at_str: String = row.get(15)?;
+        let task_updated_at_str: String = row.get(16)?;
 
         let status: TaskStatus = status_str.parse().map_err(|_| {
             rusqlite::Error::InvalidColumnType(
-                12,
+                13,
                 "status".to_string(),
                 rusqlite::types::Type::Text,
             )

@@ -9,6 +9,7 @@ pub struct Session {
     pub end_time: Option<DateTime<Utc>>,
     pub notes: Option<String>,
     pub link: Option<String>,
+    pub is_background: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -40,6 +41,27 @@ impl SessionWithTask {
 
     pub fn duration_seconds(&self) -> Option<i64> {
         self.session.duration_seconds()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct SessionSplitTime {
+    pub session_id: i64,
+    pub task_id: i64,
+    pub task_name: String,
+    pub em_quadrant: EmQuadrant,
+    pub total_seconds: i64,
+    pub split_seconds: i64,
+    pub overlap_seconds: i64,
+}
+
+impl SessionSplitTime {
+    pub fn total_minutes(&self) -> i64 {
+        self.total_seconds / 60
+    }
+
+    pub fn split_minutes(&self) -> i64 {
+        self.split_seconds / 60
     }
 }
 
@@ -124,6 +146,7 @@ mod tests {
             end_time: None,
             notes: None,
             link: None,
+            is_background: false,
             created_at: Utc::now(),
         };
         assert!(active_session.is_active());
@@ -135,6 +158,7 @@ mod tests {
             end_time: Some(Utc::now()),
             notes: None,
             link: None,
+            is_background: false,
             created_at: Utc::now(),
         };
         assert!(!completed_session.is_active());
@@ -152,6 +176,7 @@ mod tests {
             end_time: Some(end),
             notes: None,
             link: None,
+            is_background: false,
             created_at: start,
         };
 
@@ -168,6 +193,7 @@ mod tests {
             end_time: None,
             notes: None,
             link: None,
+            is_background: false,
             created_at: Utc::now(),
         };
 

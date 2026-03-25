@@ -666,6 +666,7 @@ mod tests {
                 end_time: Some(now + chrono::Duration::hours(1)),
                 notes: None,
                 link: None,
+                is_background: false,
                 created_at: now,
             },
             task: Task {
