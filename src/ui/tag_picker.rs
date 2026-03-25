@@ -5,6 +5,8 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+use fuzzy_matcher::skim::SkimMatcherV2;
+use fuzzy_matcher::FuzzyMatcher;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
@@ -87,6 +89,10 @@ pub struct TagPicker {
     tags: Vec<TagWithTime>,
     state: ListState,
     period: Period,
+    search_query: String,
+    search_active: bool,
+    filtered_indices: Vec<usize>,
+    filtered_state: ListState,
 }
 
 impl TagPicker {
@@ -95,10 +101,19 @@ impl TagPicker {
         if !tags.is_empty() {
             state.select(Some(0));
         }
+        let mut filtered_state = ListState::default();
+        if !tags.is_empty() {
+            filtered_state.select(Some(0));
+        }
+        let filtered_indices: Vec<usize> = (0..tags.len()).collect();
         Self {
             tags,
             state,
             period: Period::Week,
+            search_query: String::new(),
+            search_active: false,
+            filtered_indices,
+            filtered_state,
         }
     }
 
@@ -149,36 +164,65 @@ impl TagPicker {
                 if let Event::Key(key) =
                     event::read().map_err(|e| TagPickerError::Terminal(e.to_string()))?
                 {
-                    match (key.modifiers, key.code) {
-                        (KeyModifiers::CONTROL, KeyCode::Char('c'))
-                        | (_, KeyCode::Esc)
-                        | (_, KeyCode::Char('q') | KeyCode::Char('Q')) => {
-                            return Ok(TagPickerResult::Cancelled);
-                        }
-                        (_, KeyCode::Up) => {
-                            self.move_up();
-                        }
-                        (_, KeyCode::Down) => {
-                            self.move_down();
-                        }
-                        (_, KeyCode::Char('j')) => {
-                            self.move_down();
-                        }
-                        (_, KeyCode::Char('k')) => {
-                            self.move_up();
-                        }
-                        (_, KeyCode::Enter) => {
-                            if let Some(tag) = self.selected_tag() {
-                                return Ok(TagPickerResult::Selected(tag.tag.clone()));
+                    if self.search_active {
+                        match (key.modifiers, key.code) {
+                            (KeyModifiers::CONTROL, KeyCode::Char('c')) | (_, KeyCode::Esc) => {
+                                self.cancel_search();
                             }
-                        }
-                        (_, KeyCode::Char(c)) => {
-                            if let Some(new_period) = Period::from_key(c) {
-                                self.period = new_period;
-                                return Ok(TagPickerResult::PeriodChanged(new_period));
+                            (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
+                                self.move_down_filtered();
                             }
+                            (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
+                                self.move_up_filtered();
+                            }
+                            (_, KeyCode::Enter) => {
+                                if let Some(tag) = self.selected_filtered_tag() {
+                                    return Ok(TagPickerResult::Selected(tag.tag.clone()));
+                                }
+                            }
+                            (_, KeyCode::Backspace) => {
+                                self.search_query.pop();
+                                self.apply_search_filter();
+                            }
+                            (KeyModifiers::CONTROL, KeyCode::Char('w')) => {
+                                self.delete_last_word();
+                                self.apply_search_filter();
+                            }
+                            (_, KeyCode::Char(c)) => {
+                                self.search_query.push(c);
+                                self.apply_search_filter();
+                            }
+                            _ => {}
                         }
-                        _ => {}
+                    } else {
+                        match (key.modifiers, key.code) {
+                            (KeyModifiers::CONTROL, KeyCode::Char('c'))
+                            | (_, KeyCode::Esc)
+                            | (_, KeyCode::Char('q') | KeyCode::Char('Q')) => {
+                                return Ok(TagPickerResult::Cancelled);
+                            }
+                            (_, KeyCode::Char('/')) => {
+                                self.enter_search_mode();
+                            }
+                            (_, KeyCode::Up) | (_, KeyCode::Char('k')) => {
+                                self.move_up();
+                            }
+                            (_, KeyCode::Down) | (_, KeyCode::Char('j')) => {
+                                self.move_down();
+                            }
+                            (_, KeyCode::Enter) => {
+                                if let Some(tag) = self.selected_tag() {
+                                    return Ok(TagPickerResult::Selected(tag.tag.clone()));
+                                }
+                            }
+                            (_, KeyCode::Char(c)) => {
+                                if let Some(new_period) = Period::from_key(c) {
+                                    self.period = new_period;
+                                    return Ok(TagPickerResult::PeriodChanged(new_period));
+                                }
+                            }
+                            _ => {}
+                        }
                     }
                 }
             }
@@ -217,6 +261,96 @@ impl TagPicker {
             None => 0,
         };
         self.state.select(Some(i));
+    }
+
+    fn enter_search_mode(&mut self) {
+        self.search_active = true;
+        self.search_query.clear();
+        self.filtered_indices = (0..self.tags.len()).collect();
+        self.filtered_state.select(Some(0));
+    }
+
+    fn cancel_search(&mut self) {
+        self.search_active = false;
+        self.search_query.clear();
+        self.filtered_indices = (0..self.tags.len()).collect();
+        self.filtered_state.select(Some(0));
+    }
+
+    fn delete_last_word(&mut self) {
+        let trimmed = self.search_query.trim_end();
+        if trimmed.is_empty() {
+            self.search_query.clear();
+        } else if let Some(pos) = trimmed.rfind(|c: char| c.is_whitespace()) {
+            self.search_query.truncate(pos);
+        } else {
+            self.search_query.clear();
+        }
+    }
+
+    fn apply_search_filter(&mut self) {
+        if self.search_query.is_empty() {
+            self.filtered_indices = (0..self.tags.len()).collect();
+        } else {
+            let matcher = SkimMatcherV2::default();
+            self.filtered_indices = self
+                .tags
+                .iter()
+                .enumerate()
+                .filter_map(|(idx, tag)| {
+                    matcher
+                        .fuzzy_match(&tag.tag, &self.search_query)
+                        .map(|_| idx)
+                })
+                .collect();
+        }
+        self.filtered_state
+            .select(if self.filtered_indices.is_empty() {
+                None
+            } else {
+                Some(0)
+            });
+    }
+
+    fn move_up_filtered(&mut self) {
+        if self.filtered_indices.is_empty() {
+            return;
+        }
+        let i = match self.filtered_state.selected() {
+            Some(i) => {
+                if i == 0 {
+                    self.filtered_indices.len() - 1
+                } else {
+                    i - 1
+                }
+            }
+            None => 0,
+        };
+        self.filtered_state.select(Some(i));
+    }
+
+    fn move_down_filtered(&mut self) {
+        if self.filtered_indices.is_empty() {
+            return;
+        }
+        let i = match self.filtered_state.selected() {
+            Some(i) => {
+                if i >= self.filtered_indices.len() - 1 {
+                    0
+                } else {
+                    i + 1
+                }
+            }
+            None => 0,
+        };
+        self.filtered_state.select(Some(i));
+    }
+
+    fn selected_filtered_tag(&self) -> Option<&TagWithTime> {
+        self.filtered_state
+            .selected()
+            .and_then(|i| self.filtered_indices.get(i))
+            .and_then(|&idx| self.tags.get(idx))
     }
 
     fn selected_tag(&self) -> Option<&TagWithTime> {
@@ -262,43 +396,85 @@ impl TagPicker {
             return;
         }
 
-        let items: Vec<ListItem> = self
-            .tags
-            .iter()
-            .map(|tag| {
-                let time_str = format_duration(tag.total_seconds);
-                let content = format!(
-                    "  {:<20} {:>10}  ({:>3} sessions)",
-                    tag.tag, time_str, tag.session_count
-                );
-                ListItem::new(content)
-            })
-            .collect();
+        if self.search_active && self.filtered_indices.is_empty() {
+            let paragraph = Paragraph::new(format!("No matches for \"{}\"", self.search_query))
+                .block(Block::default().borders(Borders::ALL))
+                .style(Style::default().fg(Color::DarkGray));
+            f.render_widget(paragraph, area);
+            return;
+        }
 
-        let list = List::new(items)
-            .block(Block::default().borders(Borders::ALL))
-            .highlight_style(Style::default().fg(Color::Yellow))
-            .highlight_symbol("> ");
+        if self.search_active {
+            let items: Vec<ListItem> = self
+                .filtered_indices
+                .iter()
+                .map(|&idx| {
+                    let tag = &self.tags[idx];
+                    let time_str = format_duration(tag.total_seconds);
+                    let content = format!(
+                        "  {:<20} {:>10}  ({:>3} sessions)",
+                        tag.tag, time_str, tag.session_count
+                    );
+                    ListItem::new(content)
+                })
+                .collect();
 
-        f.render_stateful_widget(list, area, &mut self.state);
+            let list = List::new(items)
+                .block(Block::default().borders(Borders::ALL))
+                .highlight_style(Style::default().fg(Color::Yellow))
+                .highlight_symbol("> ");
+
+            f.render_stateful_widget(list, area, &mut self.filtered_state);
+        } else {
+            let items: Vec<ListItem> = self
+                .tags
+                .iter()
+                .map(|tag| {
+                    let time_str = format_duration(tag.total_seconds);
+                    let content = format!(
+                        "  {:<20} {:>10}  ({:>3} sessions)",
+                        tag.tag, time_str, tag.session_count
+                    );
+                    ListItem::new(content)
+                })
+                .collect();
+
+            let list = List::new(items)
+                .block(Block::default().borders(Borders::ALL))
+                .highlight_style(Style::default().fg(Color::Yellow))
+                .highlight_symbol("> ");
+
+            f.render_stateful_widget(list, area, &mut self.state);
+        }
     }
 
     fn render_footer(&self, f: &mut Frame, area: Rect) {
-        let paragraph = Paragraph::new(Line::from(vec![
-            Span::styled("[D]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Day  "),
-            Span::styled("[W]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Week  "),
-            Span::styled("[M]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Month  "),
-            Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Navigate  "),
-            Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Select  "),
-            Span::styled("[Q]", Style::default().fg(Color::Yellow)),
-            Span::raw(" Quit"),
-        ]))
-        .block(Block::default().borders(Borders::ALL));
+        let paragraph = if self.search_active {
+            Paragraph::new(Line::from(vec![
+                Span::styled("Search: ", Style::default().fg(Color::Cyan)),
+                Span::styled(self.search_query.clone(), Style::default().fg(Color::White)),
+                Span::styled("█", Style::default().fg(Color::White)),
+            ]))
+            .block(Block::default().borders(Borders::ALL))
+        } else {
+            Paragraph::new(Line::from(vec![
+                Span::styled("[D]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Day  "),
+                Span::styled("[W]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Week  "),
+                Span::styled("[M]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Month  "),
+                Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Navigate  "),
+                Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Select  "),
+                Span::styled("[/]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Search  "),
+                Span::styled("[Q]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Quit"),
+            ]))
+            .block(Block::default().borders(Borders::ALL))
+        };
 
         f.render_widget(paragraph, area);
     }
@@ -371,5 +547,142 @@ mod tests {
         assert_eq!(format_duration(60), "1m");
         assert_eq!(format_duration(3600), "1h 0m");
         assert_eq!(format_duration(3661), "1h 1m");
+    }
+
+    fn create_test_tags() -> Vec<TagWithTime> {
+        vec![
+            TagWithTime {
+                tag: "coding".to_string(),
+                total_seconds: 3600,
+                session_count: 2,
+            },
+            TagWithTime {
+                tag: "meeting".to_string(),
+                total_seconds: 7200,
+                session_count: 3,
+            },
+            TagWithTime {
+                tag: "email".to_string(),
+                total_seconds: 1800,
+                session_count: 1,
+            },
+            TagWithTime {
+                tag: "code-review".to_string(),
+                total_seconds: 5400,
+                session_count: 4,
+            },
+        ]
+    }
+
+    #[test]
+    fn test_tag_picker_enter_search_mode() {
+        let tags = create_test_tags();
+        let mut picker = TagPicker::new(tags);
+
+        assert!(!picker.search_active);
+        picker.enter_search_mode();
+        assert!(picker.search_active);
+        assert!(picker.search_query.is_empty());
+        assert_eq!(picker.filtered_indices.len(), 4);
+    }
+
+    #[test]
+    fn test_tag_picker_cancel_search() {
+        let tags = create_test_tags();
+        let mut picker = TagPicker::new(tags);
+
+        picker.enter_search_mode();
+        picker.search_query = "test".to_string();
+        picker.cancel_search();
+        assert!(!picker.search_active);
+        assert!(picker.search_query.is_empty());
+    }
+
+    #[test]
+    fn test_tag_picker_search_filter() {
+        let tags = create_test_tags();
+        let mut picker = TagPicker::new(tags);
+
+        picker.search_query = "cod".to_string();
+        picker.apply_search_filter();
+
+        assert_eq!(picker.filtered_indices.len(), 2);
+    }
+
+    #[test]
+    fn test_tag_picker_search_filter_empty_query() {
+        let tags = create_test_tags();
+        let mut picker = TagPicker::new(tags);
+
+        picker.search_query = String::new();
+        picker.apply_search_filter();
+
+        assert_eq!(picker.filtered_indices.len(), 4);
+    }
+
+    #[test]
+    fn test_tag_picker_search_filter_no_match() {
+        let tags = create_test_tags();
+        let mut picker = TagPicker::new(tags);
+
+        picker.search_query = "xyz".to_string();
+        picker.apply_search_filter();
+
+        assert_eq!(picker.filtered_indices.len(), 0);
+    }
+
+    #[test]
+    fn test_tag_picker_filtered_navigation() {
+        let tags = create_test_tags();
+        let mut picker = TagPicker::new(tags);
+
+        picker.search_query = "cod".to_string();
+        picker.apply_search_filter();
+
+        assert_eq!(picker.filtered_state.selected(), Some(0));
+        picker.move_down_filtered();
+        assert_eq!(picker.filtered_state.selected(), Some(1));
+        picker.move_down_filtered();
+        assert_eq!(picker.filtered_state.selected(), Some(0));
+        picker.move_up_filtered();
+        assert_eq!(picker.filtered_state.selected(), Some(1));
+    }
+
+    #[test]
+    fn test_tag_picker_delete_last_word() {
+        let tags = create_test_tags();
+        let mut picker = TagPicker::new(tags);
+
+        picker.search_query = "hello world test".to_string();
+        picker.delete_last_word();
+        assert_eq!(picker.search_query, "hello world");
+
+        picker.delete_last_word();
+        assert_eq!(picker.search_query, "hello");
+
+        picker.delete_last_word();
+        assert_eq!(picker.search_query, "");
+
+        picker.search_query = "   ".to_string();
+        picker.delete_last_word();
+        assert_eq!(picker.search_query, "");
+    }
+
+    #[test]
+    fn test_tag_picker_selected_filtered_tag() {
+        let tags = create_test_tags();
+        let mut picker = TagPicker::new(tags);
+
+        picker.search_query = "cod".to_string();
+        picker.apply_search_filter();
+
+        let tag = picker.selected_filtered_tag();
+        assert!(tag.is_some());
+        assert_eq!(tag.unwrap().tag, "coding");
+
+        picker.move_down_filtered();
+        let tag = picker.selected_filtered_tag();
+        assert!(tag.is_some());
+        assert_eq!(tag.unwrap().tag, "code-review");
     }
 }
