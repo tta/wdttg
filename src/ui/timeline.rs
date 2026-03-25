@@ -548,6 +548,7 @@ impl TimelineView {
 
         let mut spans: Vec<Span<'static>> = Vec::new();
         let mut current_color: Option<Color> = None;
+        let mut current_is_overlap = false;
         let mut current_chars = String::new();
 
         for (has_overlap, color) in positions {
@@ -557,10 +558,11 @@ impl TimelineView {
                 color
             };
 
+            let ch = if has_overlap { OVERLAP_CHAR } else { '█' };
             match target_color {
                 Some(c) => {
-                    if current_color == Some(c) {
-                        current_chars.push('█');
+                    if current_color == Some(c) && current_is_overlap == has_overlap {
+                        current_chars.push(ch);
                     } else {
                         if !current_chars.is_empty() {
                             let style = current_color
@@ -569,7 +571,8 @@ impl TimelineView {
                             spans.push(Span::styled(std::mem::take(&mut current_chars), style));
                         }
                         current_color = Some(c);
-                        current_chars.push('█');
+                        current_is_overlap = has_overlap;
+                        current_chars.push(ch);
                     }
                 }
                 None => {
@@ -751,7 +754,8 @@ pub fn quadrant_color(quadrant: &EmQuadrant) -> Color {
     }
 }
 
-const OVERLAP_COLOR: Color = Color::Magenta;
+const OVERLAP_COLOR: Color = Color::Cyan;
+const OVERLAP_CHAR: char = '▓';
 
 fn detect_overlapping_sessions(blocks: &[TimeBlock]) -> HashSet<i64> {
     let mut overlapping = HashSet::new();
@@ -885,6 +889,7 @@ fn print_24h_bar_static(blocks: &[TimeBlock], width: usize) {
         } else {
             color
         };
+        let ch = if has_overlap { OVERLAP_CHAR } else { '█' };
 
         if current_color != target_color {
             if current_color.is_some() {
@@ -895,7 +900,7 @@ fn print_24h_bar_static(blocks: &[TimeBlock], width: usize) {
             }
             current_color = target_color;
         }
-        result.push('█');
+        result.push(ch);
     }
 
     if current_color.is_some() {
