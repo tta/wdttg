@@ -732,31 +732,47 @@ impl SessionService {
         start: NaiveDate,
         end: NaiveDate,
     ) -> Result<Vec<crate::models::TagTime>> {
-        let conn = self.db.connection();
+        use std::collections::HashMap;
 
-        let start_str = format!("{} 00:00:00", start.format("%Y-%m-%d"));
-        let end_str = format!("{} 23:59:59", end.format("%Y-%m-%d"));
+        let split_times = self.get_split_times(start, end)?;
+
+        if split_times.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let conn = self.db.connection();
+        let mut task_tags: HashMap<i64, Vec<String>> = HashMap::new();
 
         let mut stmt = conn.prepare(
-            "SELECT tg.name, SUM(strftime('%s', s.end_time) - strftime('%s', s.start_time)) as total_seconds
-             FROM sessions s
-             INNER JOIN tasks t ON s.task_id = t.id
-             INNER JOIN task_tags tt ON t.id = tt.task_id
-             INNER JOIN tags tg ON tt.tag_id = tg.id
-             WHERE s.start_time >= ?1 AND s.start_time <= ?2 AND s.end_time IS NOT NULL
-             GROUP BY tg.id, tg.name
-             ORDER BY total_seconds DESC",
+            "SELECT tt.task_id, tg.name
+             FROM task_tags tt
+             INNER JOIN tags tg ON tt.tag_id = tg.id",
         )?;
 
-        let results = stmt
-            .query_map(params![start_str, end_str], |row| {
-                Ok(crate::models::TagTime {
-                    tag: row.get(0)?,
-                    total_seconds: row.get(1)?,
-                })
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
 
+        for row in rows {
+            let (task_id, tag_name) = row?;
+            task_tags.entry(task_id).or_default().push(tag_name);
+        }
+
+        let mut by_tag: HashMap<String, i64> = HashMap::new();
+        for st in &split_times {
+            if let Some(tags) = task_tags.get(&st.task_id) {
+                for tag in tags {
+                    *by_tag.entry(tag.clone()).or_insert(0) += st.split_seconds;
+                }
+            }
+        }
+
+        let mut results: Vec<crate::models::TagTime> = by_tag
+            .into_iter()
+            .map(|(tag, total_seconds)| crate::models::TagTime { tag, total_seconds })
+            .collect();
+
+        results.sort_by(|a, b| b.total_seconds.cmp(&a.total_seconds));
         Ok(results)
     }
 
@@ -765,32 +781,55 @@ impl SessionService {
         start: NaiveDate,
         end: NaiveDate,
     ) -> Result<Vec<crate::models::TagWithTime>> {
-        let conn = self.db.connection();
+        use std::collections::HashMap;
 
-        let start_str = format!("{} 00:00:00", start.format("%Y-%m-%d"));
-        let end_str = format!("{} 23:59:59", end.format("%Y-%m-%d"));
+        let split_times = self.get_split_times(start, end)?;
+
+        if split_times.is_empty() {
+            return Ok(vec![]);
+        }
+
+        let conn = self.db.connection();
+        let mut task_tags: HashMap<i64, Vec<String>> = HashMap::new();
 
         let mut stmt = conn.prepare(
-            "SELECT tg.name, SUM(strftime('%s', s.end_time) - strftime('%s', s.start_time)) as total_seconds, COUNT(s.id) as session_count
-             FROM sessions s
-             INNER JOIN tasks t ON s.task_id = t.id
-             INNER JOIN task_tags tt ON t.id = tt.task_id
-             INNER JOIN tags tg ON tt.tag_id = tg.id
-             WHERE s.start_time >= ?1 AND s.start_time <= ?2 AND s.end_time IS NOT NULL
-             GROUP BY tg.id, tg.name
-             ORDER BY total_seconds DESC",
+            "SELECT tt.task_id, tg.name
+             FROM task_tags tt
+             INNER JOIN tags tg ON tt.tag_id = tg.id",
         )?;
 
-        let results = stmt
-            .query_map(params![start_str, end_str], |row| {
-                Ok(crate::models::TagWithTime {
-                    tag: row.get(0)?,
-                    total_seconds: row.get(1)?,
-                    session_count: row.get(2)?,
-                })
-            })?
-            .collect::<std::result::Result<Vec<_>, _>>()?;
+        let rows = stmt.query_map([], |row| {
+            Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+        })?;
 
+        for row in rows {
+            let (task_id, tag_name) = row?;
+            task_tags.entry(task_id).or_default().push(tag_name);
+        }
+
+        let mut by_tag: HashMap<String, (i64, i64)> = HashMap::new();
+        for st in &split_times {
+            if let Some(tags) = task_tags.get(&st.task_id) {
+                for tag in tags {
+                    let entry = by_tag.entry(tag.clone()).or_insert((0, 0));
+                    entry.0 += st.split_seconds;
+                    entry.1 += 1;
+                }
+            }
+        }
+
+        let mut results: Vec<crate::models::TagWithTime> = by_tag
+            .into_iter()
+            .map(
+                |(tag, (total_seconds, session_count))| crate::models::TagWithTime {
+                    tag,
+                    total_seconds,
+                    session_count,
+                },
+            )
+            .collect();
+
+        results.sort_by(|a, b| b.total_seconds.cmp(&a.total_seconds));
         Ok(results)
     }
 
@@ -1232,6 +1271,92 @@ mod tests {
         let coding_tag = coding_tag.unwrap();
         assert_eq!(coding_tag.total_seconds, 3600);
         assert_eq!(coding_tag.session_count, 1);
+    }
+
+    #[test]
+    fn test_get_tag_time_with_split_times() {
+        use chrono::TimeZone;
+
+        let (session_service, task_service) = create_test_services();
+
+        let fg_task = task_service.get_or_create("coding/feature").unwrap();
+        let bg_task = task_service.get_or_create("meeting/standup").unwrap();
+
+        let base = Utc.with_ymd_and_hms(2024, 1, 1, 9, 0, 0).unwrap();
+        let fg_start = base + chrono::Duration::hours(1);
+        let fg_end = base + chrono::Duration::hours(2);
+        let bg_start = base;
+        let bg_end = base + chrono::Duration::hours(3);
+
+        let conn = session_service.db.connection();
+        conn.execute(
+            "INSERT INTO sessions (task_id, start_time, end_time, is_background) VALUES (?1, ?2, ?3, 0)",
+            params![fg_task.id, format_sqlite_datetime(&fg_start), format_sqlite_datetime(&fg_end)],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO sessions (task_id, start_time, end_time, is_background) VALUES (?1, ?2, ?3, 1)",
+            params![bg_task.id, format_sqlite_datetime(&bg_start), format_sqlite_datetime(&bg_end)],
+        ).unwrap();
+        drop(conn);
+
+        let date = base.date_naive();
+        let tag_times = session_service.get_tag_time(date, date).unwrap();
+
+        assert!(!tag_times.is_empty());
+
+        let coding_tag = tag_times.iter().find(|t| t.tag == "coding");
+        assert!(coding_tag.is_some());
+        let coding_time = coding_tag.unwrap().total_seconds;
+        assert_eq!(coding_time, 1800);
+
+        let meeting_tag = tag_times.iter().find(|t| t.tag == "meeting");
+        assert!(meeting_tag.is_some());
+        let meeting_time = meeting_tag.unwrap().total_seconds;
+        assert_eq!(meeting_time, 9000);
+    }
+
+    #[test]
+    fn test_get_tags_with_time_with_split_times() {
+        use chrono::TimeZone;
+
+        let (session_service, task_service) = create_test_services();
+
+        let fg_task = task_service.get_or_create("coding/feature").unwrap();
+        let bg_task = task_service.get_or_create("meeting/standup").unwrap();
+
+        let base = Utc.with_ymd_and_hms(2024, 1, 1, 9, 0, 0).unwrap();
+        let fg_start = base + chrono::Duration::hours(1);
+        let fg_end = base + chrono::Duration::hours(2);
+        let bg_start = base;
+        let bg_end = base + chrono::Duration::hours(3);
+
+        let conn = session_service.db.connection();
+        conn.execute(
+            "INSERT INTO sessions (task_id, start_time, end_time, is_background) VALUES (?1, ?2, ?3, 0)",
+            params![fg_task.id, format_sqlite_datetime(&fg_start), format_sqlite_datetime(&fg_end)],
+        ).unwrap();
+        conn.execute(
+            "INSERT INTO sessions (task_id, start_time, end_time, is_background) VALUES (?1, ?2, ?3, 1)",
+            params![bg_task.id, format_sqlite_datetime(&bg_start), format_sqlite_datetime(&bg_end)],
+        ).unwrap();
+        drop(conn);
+
+        let date = base.date_naive();
+        let tags_with_time = session_service.get_tags_with_time(date, date).unwrap();
+
+        assert!(!tags_with_time.is_empty());
+
+        let coding_tag = tags_with_time.iter().find(|t| t.tag == "coding");
+        assert!(coding_tag.is_some());
+        let coding = coding_tag.unwrap();
+        assert_eq!(coding.total_seconds, 1800);
+        assert_eq!(coding.session_count, 1);
+
+        let meeting_tag = tags_with_time.iter().find(|t| t.tag == "meeting");
+        assert!(meeting_tag.is_some());
+        let meeting = meeting_tag.unwrap();
+        assert_eq!(meeting.total_seconds, 9000);
+        assert_eq!(meeting.session_count, 1);
     }
 
     #[test]
