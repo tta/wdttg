@@ -81,11 +81,24 @@ fn handle_start(
     query: Option<&str>,
     em_arg: Option<&str>,
     link_arg: Option<&str>,
+    bg: bool,
     no_prompt: bool,
     db: &Arc<Database>,
 ) -> Result<(), String> {
     let task_service = TaskService::new(Arc::clone(db));
     let session_service = SessionService::new(Arc::clone(db));
+
+    if bg
+        && session_service
+            .get_active_background()
+            .map_err(|e| e.to_string())?
+            .is_some()
+    {
+        return Err(
+            "A background task is already running. Stop it first with 'wdttg stop --bg'"
+                .to_string(),
+        );
+    }
 
     let (task, is_new_task) = if let Some(query_str) = query {
         if !query_str.is_empty() {
@@ -166,14 +179,21 @@ fn handle_start(
             .map_err(|e| e.to_string())?;
     }
 
-    let session = session_service
-        .start(task.id, link_arg)
-        .map_err(|e| e.to_string())?;
+    let session = if bg {
+        session_service
+            .start_background(task.id, link_arg)
+            .map_err(|e| e.to_string())?
+    } else {
+        session_service
+            .start(task.id, link_arg)
+            .map_err(|e| e.to_string())?
+    };
 
     let updated_task = task_service.get_by_id(task.id).unwrap().unwrap();
     let em_tag = updated_task.em_quadrant().tag();
+    let bg_label = if bg { " (background)" } else { "" };
 
-    println!("Started: {} {}", updated_task.name, em_tag);
+    println!("Started{}: {} {}", bg_label, updated_task.name, em_tag);
     println!("  Session ID: {}", session.id);
 
     Ok(())
@@ -207,30 +227,143 @@ fn handle_status(db: &Arc<Database>) -> Result<(), String> {
     Ok(())
 }
 
-fn handle_stop(db: &Arc<Database>) -> Result<(), String> {
+fn handle_stop(bg: bool, all: bool, no_prompt: bool, db: &Arc<Database>) -> Result<(), String> {
     let session_service = SessionService::new(Arc::clone(db));
 
-    let active = session_service.get_active().map_err(|e| e.to_string())?;
+    if all {
+        let fg_swt = session_service
+            .get_active_foreground()
+            .map_err(|e| e.to_string())?;
+        let bg_swt = session_service
+            .get_active_background()
+            .map_err(|e| e.to_string())?;
 
-    if active.is_none() {
-        println!("No active timer");
+        let (fg, bg_sess) = session_service.stop_all().map_err(|e| e.to_string())?;
+
+        if fg.is_none() && bg_sess.is_none() {
+            println!("No active timers");
+        } else {
+            if let Some(s) = fg {
+                let duration = s.end_time.unwrap() - s.start_time;
+                if let Some(swt) = &fg_swt {
+                    println!("Stopped: {} ({})", swt.task.name, format_duration(duration));
+                } else {
+                    println!("Stopped: {}", format_duration(duration));
+                }
+            }
+            if let Some(s) = bg_sess {
+                let duration = s.end_time.unwrap() - s.start_time;
+                if let Some(swt) = &bg_swt {
+                    println!(
+                        "Stopped background: {} ({})",
+                        swt.task.name,
+                        format_duration(duration)
+                    );
+                } else {
+                    println!("Stopped background: {}", format_duration(duration));
+                }
+            }
+        }
         return Ok(());
     }
 
-    let active = active.unwrap();
-    let task_name = active.task.name.clone();
-    let session_id = active.session.id;
+    if bg {
+        let bg_swt = session_service
+            .get_active_background()
+            .map_err(|e| e.to_string())?;
+        let stopped = session_service
+            .stop_background()
+            .map_err(|e| e.to_string())?;
+        match (stopped, bg_swt) {
+            (Some(s), Some(swt)) => {
+                let duration = s.end_time.unwrap() - s.start_time;
+                println!(
+                    "Stopped background: {} ({})",
+                    swt.task.name,
+                    format_duration(duration)
+                );
+            }
+            (Some(s), None) => {
+                let duration = s.end_time.unwrap() - s.start_time;
+                println!("Stopped background: {}", format_duration(duration));
+            }
+            (None, _) => println!("No background timer running"),
+        }
+        return Ok(());
+    }
 
-    let stopped = session_service.stop().map_err(|e| e.to_string())?;
+    let fg = session_service
+        .get_active_foreground()
+        .map_err(|e| e.to_string())?;
+    let bg_sess = session_service
+        .get_active_background()
+        .map_err(|e| e.to_string())?;
 
-    if let Some(session) = stopped {
-        let duration = session.end_time.unwrap() - session.start_time;
-        let duration_str = format_duration(duration);
+    match (fg, bg_sess) {
+        (None, None) => println!("No active timer"),
+        (Some(fg_swt), None) => {
+            let task_name = fg_swt.task.name.clone();
+            let stopped = session_service.stop().map_err(|e| e.to_string())?;
+            if let Some(session) = stopped {
+                let duration = session.end_time.unwrap() - session.start_time;
+                println!("Stopped: {} ({})", task_name, format_duration(duration));
+            }
+        }
+        (None, Some(_)) => {
+            println!("No foreground timer. Background is running. Use --bg to stop it.");
+        }
+        (Some(fg_sess), Some(bg_s)) => {
+            if no_prompt {
+                let task_name = fg_sess.task.name.clone();
+                let stopped = session_service.stop().map_err(|e| e.to_string())?;
+                if let Some(session) = stopped {
+                    let duration = session.end_time.unwrap() - session.start_time;
+                    println!("Stopped: {} ({})", task_name, format_duration(duration));
+                }
+            } else {
+                let fg_task_name = fg_sess.task.name.clone();
+                let bg_task_name = bg_s.task.name.clone();
 
-        println!("Stopped: {} ({})", task_name, duration_str);
-        println!("  Session ID: {}", session_id);
-    } else {
-        println!("No active timer");
+                println!("Both foreground and background tasks are running:");
+                println!("  [F] {} (foreground)", fg_task_name);
+                println!("  [A] Stop all");
+                println!("  [C] Cancel");
+
+                use std::io::{self, BufRead, Write};
+                io::stdout().flush().unwrap();
+                let stdin = io::stdin();
+                let input = stdin.lock().lines().next();
+
+                match input {
+                    Some(Ok(ref s)) if s.to_lowercase() == "a" => {
+                        let (fg, bg_stopped) =
+                            session_service.stop_all().map_err(|e| e.to_string())?;
+                        if let Some(s) = fg {
+                            let duration = s.end_time.unwrap() - s.start_time;
+                            println!("Stopped: {} ({})", fg_task_name, format_duration(duration));
+                        }
+                        if let Some(s) = bg_stopped {
+                            let duration = s.end_time.unwrap() - s.start_time;
+                            println!(
+                                "Stopped background: {} ({})",
+                                bg_task_name,
+                                format_duration(duration)
+                            );
+                        }
+                    }
+                    Some(Ok(ref s)) if s.to_lowercase() == "c" => {
+                        println!("Cancelled");
+                    }
+                    _ => {
+                        let stopped = session_service.stop().map_err(|e| e.to_string())?;
+                        if let Some(session) = stopped {
+                            let duration = session.end_time.unwrap() - session.start_time;
+                            println!("Stopped: {} ({})", fg_task_name, format_duration(duration));
+                        }
+                    }
+                }
+            }
+        }
     }
 
     Ok(())
@@ -1081,14 +1214,20 @@ fn main() {
     };
 
     let result = match cli.command {
-        Commands::Start { query, em, link } => handle_start(
+        Commands::Start {
+            query,
+            em,
+            link,
+            bg,
+        } => handle_start(
             query.as_deref(),
             em.as_deref(),
             link.as_deref(),
+            bg,
             cli.no_prompt,
             &db,
         ),
-        Commands::Stop => handle_stop(&db),
+        Commands::Stop { bg, all } => handle_stop(bg, all, cli.no_prompt, &db),
         Commands::Status => handle_status(&db),
         Commands::Done => handle_done(&db),
         Commands::Reopen { query } => handle_reopen(query.as_deref(), cli.no_prompt, &db),

@@ -22,9 +22,18 @@ pub enum Commands {
 
         #[arg(long)]
         link: Option<String>,
+
+        #[arg(long)]
+        bg: bool,
     },
 
-    Stop,
+    Stop {
+        #[arg(long)]
+        bg: bool,
+
+        #[arg(long)]
+        all: bool,
+    },
 
     Status,
 
