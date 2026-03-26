@@ -104,6 +104,10 @@ impl TaskPicker {
                     (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
                         self.move_selection(-1);
                     }
+                    (KeyModifiers::CONTROL, KeyCode::Char('w')) => {
+                        self.delete_last_word();
+                        self.update_filter();
+                    }
                     (_, KeyCode::Enter) => {
                         return Ok(self.select_current());
                     }
@@ -165,6 +169,17 @@ impl TaskPicker {
 
         let new_selection = ((current as i32 + delta).clamp(0, max)) as usize;
         self.list_state.select(Some(new_selection));
+    }
+
+    fn delete_last_word(&mut self) {
+        let trimmed = self.query.trim_end();
+        if trimmed.is_empty() {
+            self.query.clear();
+        } else if let Some(pos) = trimmed.rfind(|c: char| c.is_whitespace()) {
+            self.query.truncate(pos);
+        } else {
+            self.query.clear();
+        }
     }
 
     fn select_current(self) -> PickerResult {
