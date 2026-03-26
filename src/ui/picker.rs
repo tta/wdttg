@@ -148,15 +148,17 @@ impl TaskPicker {
 
         if self.filtered_indices.is_empty() && !self.query.is_empty() {
             self.list_state.select(None);
-        } else if !self.filtered_indices.is_empty() {
+        } else {
             self.list_state.select(Some(0));
         }
     }
 
     fn move_selection(&mut self, delta: i32) {
         let current = self.list_state.selected().unwrap_or(0);
-        let max = if self.query.is_empty() || !self.filtered_indices.is_empty() {
+        let max = if self.query.is_empty() {
             (self.filtered_indices.len() as i32 - 1).max(0)
+        } else if !self.filtered_indices.is_empty() {
+            self.filtered_indices.len() as i32
         } else {
             0
         };
@@ -178,16 +180,22 @@ impl TaskPicker {
             return PickerResult::Cancelled;
         }
 
-        if !self.filtered_indices.is_empty() {
-            if let Some(idx) = selected_idx {
-                if idx < self.filtered_indices.len() {
-                    let task_idx = self.filtered_indices[idx];
-                    return PickerResult::Selected(self.tasks[task_idx].clone());
-                }
-            }
+        if self.filtered_indices.is_empty() {
+            return PickerResult::CreateNew(self.query);
         }
 
-        PickerResult::CreateNew(self.query)
+        match selected_idx {
+            Some(0) => PickerResult::CreateNew(self.query),
+            Some(idx) => {
+                if idx - 1 < self.filtered_indices.len() {
+                    let task_idx = self.filtered_indices[idx - 1];
+                    PickerResult::Selected(self.tasks[task_idx].clone())
+                } else {
+                    PickerResult::CreateNew(self.query)
+                }
+            }
+            None => PickerResult::Cancelled,
+        }
     }
 
     fn render(&self, f: &mut Frame) {
