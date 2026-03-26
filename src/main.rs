@@ -278,7 +278,12 @@ fn handle_status(db: &Arc<Database>) -> Result<(), String> {
     Ok(())
 }
 
-fn handle_stop(bg: bool, all: bool, no_prompt: bool, db: &Arc<Database>) -> Result<(), String> {
+fn handle_stop(
+    all: bool,
+    task_name: Option<&str>,
+    no_prompt: bool,
+    db: &Arc<Database>,
+) -> Result<(), String> {
     let session_service = SessionService::new(Arc::clone(db));
 
     if all {
@@ -318,29 +323,47 @@ fn handle_stop(bg: bool, all: bool, no_prompt: bool, db: &Arc<Database>) -> Resu
         return Ok(());
     }
 
-    if bg {
-        let bg_swt = session_service
+    if let Some(name) = task_name {
+        let fg = session_service
+            .get_active_foreground()
+            .map_err(|e| e.to_string())?;
+        let bg_sess = session_service
             .get_active_background()
             .map_err(|e| e.to_string())?;
-        let stopped = session_service
-            .stop_background()
-            .map_err(|e| e.to_string())?;
-        match (stopped, bg_swt) {
-            (Some(s), Some(swt)) => {
-                let duration = s.end_time.unwrap() - s.start_time;
-                println!(
-                    "Stopped background: {} ({})",
-                    swt.task.name,
-                    format_duration(duration)
-                );
+
+        if let Some(ref fg_swt) = fg {
+            if task_name_matches(name, &fg_swt.task.name) {
+                let stopped = session_service.stop().map_err(|e| e.to_string())?;
+                if let Some(session) = stopped {
+                    let duration = session.end_time.unwrap() - session.start_time;
+                    println!(
+                        "Stopped: {} ({})",
+                        fg_swt.task.name,
+                        format_duration(duration)
+                    );
+                }
+                return Ok(());
             }
-            (Some(s), None) => {
-                let duration = s.end_time.unwrap() - s.start_time;
-                println!("Stopped background: {}", format_duration(duration));
-            }
-            (None, _) => println!("No background timer running"),
         }
-        return Ok(());
+
+        if let Some(ref bg_swt) = bg_sess {
+            if task_name_matches(name, &bg_swt.task.name) {
+                let stopped = session_service
+                    .stop_background()
+                    .map_err(|e| e.to_string())?;
+                if let Some(session) = stopped {
+                    let duration = session.end_time.unwrap() - session.start_time;
+                    println!(
+                        "Stopped background: {} ({})",
+                        bg_swt.task.name,
+                        format_duration(duration)
+                    );
+                }
+                return Ok(());
+            }
+        }
+
+        return Err(format!("No active task matching '{}'", name));
     }
 
     let fg = session_service
@@ -351,7 +374,9 @@ fn handle_stop(bg: bool, all: bool, no_prompt: bool, db: &Arc<Database>) -> Resu
         .map_err(|e| e.to_string())?;
 
     match (fg, bg_sess) {
-        (None, None) => println!("No active timer"),
+        (None, None) => {
+            println!("No active timer");
+        }
         (Some(fg_swt), None) => {
             let task_name = fg_swt.task.name.clone();
             let stopped = session_service.stop().map_err(|e| e.to_string())?;
@@ -360,57 +385,78 @@ fn handle_stop(bg: bool, all: bool, no_prompt: bool, db: &Arc<Database>) -> Resu
                 println!("Stopped: {} ({})", task_name, format_duration(duration));
             }
         }
-        (None, Some(_)) => {
-            println!("No foreground timer. Background is running. Use --bg to stop it.");
+        (None, Some(bg_swt)) => {
+            let task_name = bg_swt.task.name.clone();
+            let stopped = session_service
+                .stop_background()
+                .map_err(|e| e.to_string())?;
+            if let Some(session) = stopped {
+                let duration = session.end_time.unwrap() - session.start_time;
+                println!(
+                    "Stopped background: {} ({})",
+                    task_name,
+                    format_duration(duration)
+                );
+            }
         }
         (Some(fg_sess), Some(bg_s)) => {
             if no_prompt {
-                let task_name = fg_sess.task.name.clone();
-                let stopped = session_service.stop().map_err(|e| e.to_string())?;
-                if let Some(session) = stopped {
-                    let duration = session.end_time.unwrap() - session.start_time;
-                    println!("Stopped: {} ({})", task_name, format_duration(duration));
+                return Err(
+                    "Multiple tasks running. Use --task <name> to specify which task to stop, or --all to stop all.".into()
+                );
+            }
+
+            let fg_task_name = fg_sess.task.name.clone();
+            let bg_task_name = bg_s.task.name.clone();
+
+            println!("Multiple tasks running:");
+            println!("  [F] {} (foreground)", fg_task_name);
+            println!("  [B] {} (background)", bg_task_name);
+            println!("  [A] Stop all");
+            println!("  [C] Cancel");
+
+            use std::io::{self, BufRead, Write};
+            io::stdout().flush().unwrap();
+            let stdin = io::stdin();
+            let input = stdin.lock().lines().next();
+
+            match input {
+                Some(Ok(ref s)) if s.to_lowercase() == "a" => {
+                    let (fg, bg_stopped) = session_service.stop_all().map_err(|e| e.to_string())?;
+                    if let Some(s) = fg {
+                        let duration = s.end_time.unwrap() - s.start_time;
+                        println!("Stopped: {} ({})", fg_task_name, format_duration(duration));
+                    }
+                    if let Some(s) = bg_stopped {
+                        let duration = s.end_time.unwrap() - s.start_time;
+                        println!(
+                            "Stopped background: {} ({})",
+                            bg_task_name,
+                            format_duration(duration)
+                        );
+                    }
                 }
-            } else {
-                let fg_task_name = fg_sess.task.name.clone();
-                let bg_task_name = bg_s.task.name.clone();
-
-                println!("Both foreground and background tasks are running:");
-                println!("  [F] {} (foreground)", fg_task_name);
-                println!("  [A] Stop all");
-                println!("  [C] Cancel");
-
-                use std::io::{self, BufRead, Write};
-                io::stdout().flush().unwrap();
-                let stdin = io::stdin();
-                let input = stdin.lock().lines().next();
-
-                match input {
-                    Some(Ok(ref s)) if s.to_lowercase() == "a" => {
-                        let (fg, bg_stopped) =
-                            session_service.stop_all().map_err(|e| e.to_string())?;
-                        if let Some(s) = fg {
-                            let duration = s.end_time.unwrap() - s.start_time;
-                            println!("Stopped: {} ({})", fg_task_name, format_duration(duration));
-                        }
-                        if let Some(s) = bg_stopped {
-                            let duration = s.end_time.unwrap() - s.start_time;
-                            println!(
-                                "Stopped background: {} ({})",
-                                bg_task_name,
-                                format_duration(duration)
-                            );
-                        }
+                Some(Ok(ref s)) if s.to_lowercase() == "b" => {
+                    let stopped = session_service
+                        .stop_background()
+                        .map_err(|e| e.to_string())?;
+                    if let Some(session) = stopped {
+                        let duration = session.end_time.unwrap() - session.start_time;
+                        println!(
+                            "Stopped background: {} ({})",
+                            bg_task_name,
+                            format_duration(duration)
+                        );
                     }
-                    Some(Ok(ref s)) if s.to_lowercase() == "c" => {
-                        println!("Cancelled");
-                    }
-                    _ => {
-                        let stopped = session_service.stop().map_err(|e| e.to_string())?;
-                        if let Some(session) = stopped {
-                            let duration = session.end_time.unwrap() - session.start_time;
-                            println!("Stopped: {} ({})", fg_task_name, format_duration(duration));
-                        }
+                }
+                Some(Ok(ref s)) if s.to_lowercase() == "c" => {
+                    println!("Cancelled");
+                }
+                _ => {
+                    let stopped = session_service.stop().map_err(|e| e.to_string())?;
+                    if let Some(session) = stopped {
+                        let duration = session.end_time.unwrap() - session.start_time;
+                        println!("Stopped: {} ({})", fg_task_name, format_duration(duration));
                     }
                 }
             }
@@ -418,6 +464,12 @@ fn handle_stop(bg: bool, all: bool, no_prompt: bool, db: &Arc<Database>) -> Resu
     }
 
     Ok(())
+}
+
+fn task_name_matches(query: &str, task_name: &str) -> bool {
+    let query_lower = query.to_lowercase();
+    let task_lower = task_name.to_lowercase();
+    task_lower.contains(&query_lower) || query_lower.contains(&task_lower)
 }
 
 fn handle_done(db: &Arc<Database>) -> Result<(), String> {
@@ -1315,7 +1367,7 @@ fn main() {
             cli.no_prompt,
             &db,
         ),
-        Commands::Stop { bg, all } => handle_stop(bg, all, cli.no_prompt, &db),
+        Commands::Stop { all, task } => handle_stop(all, task.as_deref(), cli.no_prompt, &db),
         Commands::Status => handle_status(&db),
         Commands::Done => handle_done(&db),
         Commands::Reopen { query } => handle_reopen(query.as_deref(), cli.no_prompt, &db),

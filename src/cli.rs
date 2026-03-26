@@ -29,10 +29,10 @@ pub enum Commands {
 
     Stop {
         #[arg(long)]
-        bg: bool,
-
-        #[arg(long)]
         all: bool,
+
+        #[arg(short, long)]
+        task: Option<String>,
     },
 
     Status,
