@@ -6,8 +6,8 @@ use thiserror::Error;
 pub enum ConfigError {
     #[error("IO error: {0}")]
     Io(#[from] std::io::Error),
-    #[error("JSON parse error: {0}")]
-    Json(#[from] serde_json::Error),
+    #[error("Config parse error: {0}")]
+    Parse(String),
 }
 
 pub type Result<T> = std::result::Result<T, ConfigError>;
@@ -40,7 +40,8 @@ impl Config {
         }
 
         let content = std::fs::read_to_string(&config_path)?;
-        let config: Config = serde_json::from_str(&content)?;
+        let config: Config =
+            json5::from_str(&content).map_err(|e| ConfigError::Parse(e.to_string()))?;
         Ok(config)
     }
 
@@ -117,7 +118,7 @@ mod tests {
     #[test]
     fn test_config_parse() {
         let json = r#"{"db": "/path/to/db", "vault": "/path/to/vault"}"#;
-        let config: Config = serde_json::from_str(json).unwrap();
+        let config: Config = json5::from_str(json).unwrap();
         assert_eq!(config.db, Some("/path/to/db".to_string()));
         assert_eq!(config.vault, Some("/path/to/vault".to_string()));
     }
@@ -125,7 +126,7 @@ mod tests {
     #[test]
     fn test_config_parse_partial() {
         let json = r#"{"db": "/path/to/db"}"#;
-        let config: Config = serde_json::from_str(json).unwrap();
+        let config: Config = json5::from_str(json).unwrap();
         assert_eq!(config.db, Some("/path/to/db".to_string()));
         assert!(config.vault.is_none());
     }
@@ -133,8 +134,16 @@ mod tests {
     #[test]
     fn test_config_parse_empty() {
         let json = r#"{}"#;
-        let config: Config = serde_json::from_str(json).unwrap();
+        let config: Config = json5::from_str(json).unwrap();
         assert!(config.db.is_none());
         assert!(config.vault.is_none());
+    }
+
+    #[test]
+    fn test_config_parse_trailing_comma() {
+        let json = r#"{"db": "/path/to/db", "vault": "/path/to/vault",}"#;
+        let config: Config = json5::from_str(json).unwrap();
+        assert_eq!(config.db, Some("/path/to/db".to_string()));
+        assert_eq!(config.vault, Some("/path/to/vault".to_string()));
     }
 }
