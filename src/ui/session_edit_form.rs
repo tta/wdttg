@@ -38,6 +38,7 @@ pub enum SessionEditResult {
         end: Option<DateTime<Utc>>,
         notes: Option<String>,
         link: Option<String>,
+        is_background: bool,
     },
     Deleted(i64),
     Cancelled,
@@ -50,6 +51,7 @@ pub struct EditableSession {
     pub end: Option<DateTime<Utc>>,
     pub notes: String,
     pub link: String,
+    pub is_background: bool,
 }
 
 impl From<Session> for EditableSession {
@@ -60,6 +62,7 @@ impl From<Session> for EditableSession {
             end: session.end_time,
             notes: session.notes.clone().unwrap_or_default(),
             link: session.link.clone().unwrap_or_default(),
+            is_background: session.is_background,
         }
     }
 }
@@ -68,11 +71,18 @@ impl From<Session> for EditableSession {
 enum Field {
     StartTime,
     EndTime,
+    Background,
     Notes,
     Link,
 }
 
-const FIELDS: [Field; 4] = [Field::StartTime, Field::EndTime, Field::Notes, Field::Link];
+const FIELDS: [Field; 5] = [
+    Field::StartTime,
+    Field::EndTime,
+    Field::Background,
+    Field::Notes,
+    Field::Link,
+];
 
 pub struct SessionEditForm {
     session: EditableSession,
@@ -110,6 +120,7 @@ impl SessionEditForm {
             || self.session.end != self.original.end
             || self.session.notes != self.original.notes
             || self.session.link != self.original.link
+            || self.session.is_background != self.original.is_background
     }
 
     pub fn run(mut self) -> Result<SessionEditResult> {
@@ -292,6 +303,9 @@ impl SessionEditForm {
                 self.cursor_pos = self.text_buffer.len();
                 self.editing_text = true;
             }
+            Field::Background => {
+                self.session.is_background = !self.session.is_background;
+            }
             Field::Notes => {
                 self.text_buffer = self.session.notes.clone();
                 self.cursor_pos = self.text_buffer.len();
@@ -340,6 +354,7 @@ impl SessionEditForm {
                     }
                 }
             }
+            Field::Background => true,
             Field::Notes => {
                 self.session.notes = self.text_buffer.clone();
                 true
@@ -383,6 +398,7 @@ impl SessionEditForm {
             } else {
                 Some(self.session.link.clone())
             },
+            is_background: self.session.is_background,
         })
     }
 
@@ -569,6 +585,14 @@ impl SessionEditForm {
                     None => "(active - no end time)".to_string(),
                 };
                 ("End".to_string(), value)
+            }
+            Field::Background => {
+                let display = if self.session.is_background {
+                    "[x]".to_string()
+                } else {
+                    "[ ]".to_string()
+                };
+                ("Background".to_string(), display)
             }
             Field::Notes => {
                 let display = if self.session.notes.is_empty() {

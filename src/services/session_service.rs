@@ -17,6 +17,8 @@ pub enum SessionServiceError {
     InvalidTimeRange,
     #[error("A background task is already running. Stop it first with 'wdttg stop --bg'")]
     BackgroundAlreadyRunning,
+    #[error("A foreground task is already running. Stop it first with 'wdttg stop'")]
+    ForegroundAlreadyRunning,
 }
 
 pub type Result<T> = std::result::Result<T, SessionServiceError>;
@@ -373,10 +375,35 @@ impl SessionService {
         end: Option<DateTime<Utc>>,
         notes: Option<String>,
         link: Option<String>,
+        is_background: Option<bool>,
     ) -> Result<Session> {
         if let Some(end_time) = end {
             if end_time <= start {
                 return Err(SessionServiceError::InvalidTimeRange);
+            }
+        }
+
+        if let Some(new_bg) = is_background {
+            let current = self
+                .get_by_id(id)?
+                .ok_or(SessionServiceError::NotFound(id))?;
+
+            if new_bg != current.is_background && current.end_time.is_none() {
+                if new_bg {
+                    let existing = self.get_active_background()?;
+                    if let Some(bg) = existing {
+                        if bg.session.id != id {
+                            return Err(SessionServiceError::BackgroundAlreadyRunning);
+                        }
+                    }
+                } else {
+                    let existing = self.get_active_foreground()?;
+                    if let Some(fg) = existing {
+                        if fg.session.id != id {
+                            return Err(SessionServiceError::ForegroundAlreadyRunning);
+                        }
+                    }
+                }
             }
         }
 
@@ -385,10 +412,17 @@ impl SessionService {
         let start_str = format_sqlite_datetime(&start);
         let end_str = end.map(|dt| format_sqlite_datetime(&dt));
 
-        let rows_affected = conn.execute(
-            "UPDATE sessions SET start_time = ?1, end_time = ?2, notes = ?3, link = ?4 WHERE id = ?5",
-            params![start_str, end_str, notes, link, id],
-        )?;
+        let rows_affected = if let Some(bg) = is_background {
+            conn.execute(
+                "UPDATE sessions SET start_time = ?1, end_time = ?2, notes = ?3, link = ?4, is_background = ?5 WHERE id = ?6",
+                params![start_str, end_str, notes, link, bg as i32, id],
+            )?
+        } else {
+            conn.execute(
+                "UPDATE sessions SET start_time = ?1, end_time = ?2, notes = ?3, link = ?4 WHERE id = ?5",
+                params![start_str, end_str, notes, link, id],
+            )?
+        };
 
         if rows_affected == 0 {
             return Err(SessionServiceError::NotFound(id));
@@ -1415,6 +1449,7 @@ mod tests {
                 Some(new_end),
                 Some("Test notes".to_string()),
                 None,
+                None,
             )
             .unwrap();
 
@@ -1435,7 +1470,7 @@ mod tests {
             .unwrap();
 
         let updated = session_service
-            .update_full(session.id, new_start, None, None, None)
+            .update_full(session.id, new_start, None, None, None, None)
             .unwrap();
 
         assert_eq!(updated.start_time, new_start);
@@ -1453,7 +1488,7 @@ mod tests {
         let start = Utc::now();
         let end = start - chrono::Duration::hours(1);
 
-        let result = session_service.update_full(session.id, start, Some(end), None, None);
+        let result = session_service.update_full(session.id, start, Some(end), None, None, None);
 
         assert!(result.is_err());
         assert!(matches!(
@@ -1466,7 +1501,7 @@ mod tests {
     fn test_update_full_not_found() {
         let (session_service, _) = create_test_services();
 
-        let result = session_service.update_full(9999, Utc::now(), None, None, None);
+        let result = session_service.update_full(9999, Utc::now(), None, None, None, None);
 
         assert!(result.is_err());
         assert!(matches!(

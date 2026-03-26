@@ -50,10 +50,21 @@ fn handle_edit_session(session_id: i64, db: &Arc<Database>) -> Result<bool, Stri
             end,
             notes,
             link,
+            is_background,
         } => {
             session_service
-                .update_full(session_id, start, end, notes, link)
-                .map_err(|e| e.to_string())?;
+                .update_full(session_id, start, end, notes, link, Some(is_background))
+                .map_err(|e| match e {
+                    wdttg::SessionServiceError::BackgroundAlreadyRunning => {
+                        "Cannot switch to background: another background task is already running"
+                            .to_string()
+                    }
+                    wdttg::SessionServiceError::ForegroundAlreadyRunning => {
+                        "Cannot switch to foreground: another foreground task is already running"
+                            .to_string()
+                    }
+                    other => other.to_string(),
+                })?;
             println!("Session updated");
             Ok(true)
         }
