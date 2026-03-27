@@ -40,10 +40,19 @@ pub struct TaskPicker {
     filtered_indices: Vec<usize>,
     list_state: ListState,
     matcher: SkimMatcherV2,
+    allow_create: bool,
 }
 
 impl TaskPicker {
     pub fn new(tasks: Vec<Task>) -> Self {
+        Self::with_options(tasks, true)
+    }
+
+    pub fn without_create(tasks: Vec<Task>) -> Self {
+        Self::with_options(tasks, false)
+    }
+
+    fn with_options(tasks: Vec<Task>, allow_create: bool) -> Self {
         let filtered_indices: Vec<usize> = (0..tasks.len()).collect();
         let mut list_state = ListState::default();
         if !filtered_indices.is_empty() {
@@ -56,6 +65,7 @@ impl TaskPicker {
             filtered_indices,
             list_state,
             matcher: SkimMatcherV2::default().smart_case().ignore_case(),
+            allow_create,
         }
     }
 
@@ -196,7 +206,20 @@ impl TaskPicker {
         }
 
         if self.filtered_indices.is_empty() {
-            return PickerResult::CreateNew(self.query);
+            if self.allow_create {
+                return PickerResult::CreateNew(self.query);
+            }
+            return PickerResult::Cancelled;
+        }
+
+        if !self.allow_create {
+            if let Some(idx) = selected_idx {
+                if idx < self.filtered_indices.len() {
+                    let task_idx = self.filtered_indices[idx];
+                    return PickerResult::Selected(self.tasks[task_idx].clone());
+                }
+            }
+            return PickerResult::Cancelled;
         }
 
         match selected_idx {
@@ -246,15 +269,22 @@ impl TaskPicker {
                 .map(|task| self.task_to_list_item(task))
                 .collect()
         } else if self.filtered_indices.is_empty() {
-            vec![ListItem::new(Line::from(vec![
-                Span::styled("Create new: ", Style::default().fg(Color::DarkGray)),
-                Span::styled(
-                    &self.query,
-                    Style::default()
-                        .fg(Color::Green)
-                        .add_modifier(Modifier::BOLD),
-                ),
-            ]))]
+            if self.allow_create {
+                vec![ListItem::new(Line::from(vec![
+                    Span::styled("Create new: ", Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        &self.query,
+                        Style::default()
+                            .fg(Color::Green)
+                            .add_modifier(Modifier::BOLD),
+                    ),
+                ]))]
+            } else {
+                vec![ListItem::new(Line::from(Span::styled(
+                    "No matching tasks",
+                    Style::default().fg(Color::DarkGray),
+                )))]
+            }
         } else {
             let mut items: Vec<ListItem> = self
                 .filtered_indices
@@ -262,20 +292,22 @@ impl TaskPicker {
                 .map(|&idx| self.task_to_list_item(&self.tasks[idx]))
                 .collect();
 
-            let has_exact_match = self.tasks.iter().any(|t| t.name == self.query);
-            if !has_exact_match {
-                items.insert(
-                    0,
-                    ListItem::new(Line::from(vec![
-                        Span::styled("Create new: ", Style::default().fg(Color::DarkGray)),
-                        Span::styled(
-                            &self.query,
-                            Style::default()
-                                .fg(Color::Green)
-                                .add_modifier(Modifier::BOLD),
-                        ),
-                    ])),
-                );
+            if self.allow_create {
+                let has_exact_match = self.tasks.iter().any(|t| t.name == self.query);
+                if !has_exact_match {
+                    items.insert(
+                        0,
+                        ListItem::new(Line::from(vec![
+                            Span::styled("Create new: ", Style::default().fg(Color::DarkGray)),
+                            Span::styled(
+                                &self.query,
+                                Style::default()
+                                    .fg(Color::Green)
+                                    .add_modifier(Modifier::BOLD),
+                            ),
+                        ])),
+                    );
+                }
             }
 
             items

@@ -527,7 +527,7 @@ fn handle_reopen(query: Option<&str>, no_prompt: bool, db: &Arc<Database>) -> Re
                 return Err("No completed tasks to reopen".to_string());
             }
 
-            let picker = TaskPicker::new(completed_tasks);
+            let picker = TaskPicker::without_create(completed_tasks);
             match picker.run().map_err(|e| e.to_string())? {
                 PickerResult::Selected(t) => t,
                 PickerResult::CreateNew(_) => {
@@ -550,7 +550,7 @@ fn handle_reopen(query: Option<&str>, no_prompt: bool, db: &Arc<Database>) -> Re
             return Err("No completed tasks to reopen".to_string());
         }
 
-        let picker = TaskPicker::new(completed_tasks);
+        let picker = TaskPicker::without_create(completed_tasks);
         match picker.run().map_err(|e| e.to_string())? {
             PickerResult::Selected(t) => t,
             PickerResult::CreateNew(_) => {
@@ -592,7 +592,7 @@ fn handle_archive(query: Option<&str>, no_prompt: bool, db: &Arc<Database>) -> R
                 return Err("No tasks to archive".to_string());
             }
 
-            let picker = TaskPicker::new(non_archived);
+            let picker = TaskPicker::without_create(non_archived);
             match picker.run().map_err(|e| e.to_string())? {
                 PickerResult::Selected(t) => t,
                 PickerResult::CreateNew(_) => {
@@ -615,7 +615,7 @@ fn handle_archive(query: Option<&str>, no_prompt: bool, db: &Arc<Database>) -> R
             return Err("No tasks to archive".to_string());
         }
 
-        let picker = TaskPicker::new(non_archived);
+        let picker = TaskPicker::without_create(non_archived);
         match picker.run().map_err(|e| e.to_string())? {
             PickerResult::Selected(t) => t,
             PickerResult::CreateNew(_) => {
@@ -744,7 +744,7 @@ fn handle_edit(
             return Err("No tasks to edit".to_string());
         }
 
-        let picker = TaskPicker::new(non_archived);
+        let picker = TaskPicker::without_create(non_archived);
         let task = match picker.run().map_err(|e| e.to_string())? {
             PickerResult::Selected(t) => t,
             PickerResult::CreateNew(_) => {
