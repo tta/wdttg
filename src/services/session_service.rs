@@ -774,21 +774,22 @@ impl SessionService {
 
         let split_times = self.get_split_times(start, end)?;
 
-        let mut by_task: HashMap<i64, (String, i64, i64, crate::models::EmQuadrant)> =
+        let mut by_task_em: HashMap<(i64, crate::models::EmQuadrant), (String, i64, i64)> =
             HashMap::new();
         for st in split_times {
-            let entry =
-                by_task
-                    .entry(st.task_id)
-                    .or_insert((st.task_name.clone(), 0, 0, st.em_quadrant));
+            let entry = by_task_em.entry((st.task_id, st.em_quadrant)).or_insert((
+                st.task_name.clone(),
+                0,
+                0,
+            ));
             entry.1 += st.split_seconds;
             entry.2 += 1;
         }
 
-        let mut results: Vec<TaskTime> = by_task
+        let mut results: Vec<TaskTime> = by_task_em
             .into_iter()
             .map(
-                |(_, (task_name, total_seconds, session_count, em_quadrant))| TaskTime {
+                |((_, em_quadrant), (task_name, total_seconds, session_count))| TaskTime {
                     task_name,
                     total_seconds,
                     session_count,
