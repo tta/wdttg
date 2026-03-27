@@ -701,34 +701,41 @@ fn handle_edit(
         return Err("Task name required in non-interactive mode".to_string());
     }
 
-    let task = if let Some(query_str) = query {
+    if let Some(query_str) = query {
         if !query_str.is_empty() {
-            task_service
+            let task = task_service
                 .get_by_name(query_str)
                 .map_err(|e| e.to_string())?
-                .ok_or_else(|| format!("Task not found: {}", query_str))?
-        } else {
-            let non_archived = task_service
-                .get_non_archived_tasks()
-                .map_err(|e| e.to_string())?;
+                .ok_or_else(|| format!("Task not found: {}", query_str))?;
 
-            if non_archived.is_empty() {
-                return Err("No tasks to edit".to_string());
-            }
+            let result = edit_task(task.clone()).map_err(|e| e.to_string())?;
 
-            let picker = TaskPicker::new(non_archived);
-            match picker.run().map_err(|e| e.to_string())? {
-                PickerResult::Selected(t) => t,
-                PickerResult::CreateNew(_) => {
-                    return Err("Cannot create new task in edit. Use start command.".to_string());
+            match result {
+                EditFormResult::Saved(updated_task) => {
+                    let mut final_task = task.clone();
+                    final_task.name = updated_task.name;
+                    final_task.notes = updated_task.notes;
+                    final_task.em_urgent = updated_task.em_urgent;
+                    final_task.em_important = updated_task.em_important;
+                    final_task.status = updated_task.status;
+                    final_task.recurring = updated_task.recurring;
+
+                    task_service
+                        .update(&final_task)
+                        .map_err(|e| e.to_string())?;
+
+                    println!("Updated: {}", final_task.name);
                 }
-                PickerResult::Cancelled => {
+                EditFormResult::Cancelled => {
                     println!("Cancelled.");
-                    return Ok(());
                 }
             }
+
+            return Ok(());
         }
-    } else {
+    }
+
+    loop {
         let non_archived = task_service
             .get_non_archived_tasks()
             .map_err(|e| e.to_string())?;
@@ -738,7 +745,7 @@ fn handle_edit(
         }
 
         let picker = TaskPicker::new(non_archived);
-        match picker.run().map_err(|e| e.to_string())? {
+        let task = match picker.run().map_err(|e| e.to_string())? {
             PickerResult::Selected(t) => t,
             PickerResult::CreateNew(_) => {
                 return Err("Cannot create new task in edit. Use start command.".to_string());
@@ -747,33 +754,31 @@ fn handle_edit(
                 println!("Cancelled.");
                 return Ok(());
             }
-        }
-    };
+        };
 
-    let result = edit_task(task.clone()).map_err(|e| e.to_string())?;
+        let result = edit_task(task.clone()).map_err(|e| e.to_string())?;
 
-    match result {
-        EditFormResult::Saved(updated_task) => {
-            let mut final_task = task.clone();
-            final_task.name = updated_task.name;
-            final_task.notes = updated_task.notes;
-            final_task.em_urgent = updated_task.em_urgent;
-            final_task.em_important = updated_task.em_important;
-            final_task.status = updated_task.status;
-            final_task.recurring = updated_task.recurring;
+        match result {
+            EditFormResult::Saved(updated_task) => {
+                let mut final_task = task.clone();
+                final_task.name = updated_task.name;
+                final_task.notes = updated_task.notes;
+                final_task.em_urgent = updated_task.em_urgent;
+                final_task.em_important = updated_task.em_important;
+                final_task.status = updated_task.status;
+                final_task.recurring = updated_task.recurring;
 
-            task_service
-                .update(&final_task)
-                .map_err(|e| e.to_string())?;
+                task_service
+                    .update(&final_task)
+                    .map_err(|e| e.to_string())?;
 
-            println!("Updated: {}", final_task.name);
-        }
-        EditFormResult::Cancelled => {
-            println!("Cancelled.");
+                println!("Updated: {}", final_task.name);
+            }
+            EditFormResult::Cancelled => {
+                println!("Cancelled.");
+            }
         }
     }
-
-    Ok(())
 }
 
 fn handle_log(
