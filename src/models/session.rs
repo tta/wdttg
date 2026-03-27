@@ -122,6 +122,7 @@ impl TagWithTime {
 
 #[derive(Debug, Clone)]
 pub struct TaskTime {
+    pub task_id: i64,
     pub task_name: String,
     pub total_seconds: i64,
     pub session_count: i64,

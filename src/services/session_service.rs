@@ -776,7 +776,8 @@ impl SessionService {
 
         let mut by_task_em: HashMap<(i64, crate::models::EmQuadrant), (String, i64, i64)> =
             HashMap::new();
-        for st in split_times {
+        let mut task_totals: HashMap<i64, i64> = HashMap::new();
+        for st in &split_times {
             let entry = by_task_em.entry((st.task_id, st.em_quadrant)).or_insert((
                 st.task_name.clone(),
                 0,
@@ -784,12 +785,14 @@ impl SessionService {
             ));
             entry.1 += st.split_seconds;
             entry.2 += 1;
+            *task_totals.entry(st.task_id).or_insert(0) += st.split_seconds;
         }
 
         let mut results: Vec<TaskTime> = by_task_em
             .into_iter()
             .map(
-                |((_, em_quadrant), (task_name, total_seconds, session_count))| TaskTime {
+                |((task_id, em_quadrant), (task_name, total_seconds, session_count))| TaskTime {
+                    task_id,
                     task_name,
                     total_seconds,
                     session_count,
@@ -798,7 +801,14 @@ impl SessionService {
             )
             .collect();
 
-        results.sort_by(|a, b| b.total_seconds.cmp(&a.total_seconds));
+        results.sort_by(|a, b| {
+            let total_a = task_totals.get(&a.task_id).copied().unwrap_or(0);
+            let total_b = task_totals.get(&b.task_id).copied().unwrap_or(0);
+            match total_b.cmp(&total_a) {
+                std::cmp::Ordering::Equal => b.total_seconds.cmp(&a.total_seconds),
+                other => other,
+            }
+        });
         Ok(results)
     }
 
