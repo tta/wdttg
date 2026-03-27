@@ -1,5 +1,5 @@
 use crate::clipboard::{open_link, OpenLinkResult};
-use crate::models::Session;
+use crate::models::{EmQuadrant, Session};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
@@ -39,6 +39,7 @@ pub enum SessionEditResult {
         notes: Option<String>,
         link: Option<String>,
         is_background: bool,
+        em_quadrant: EmQuadrant,
     },
     Deleted(i64),
     Cancelled,
@@ -52,6 +53,7 @@ pub struct EditableSession {
     pub notes: String,
     pub link: String,
     pub is_background: bool,
+    pub em_quadrant: EmQuadrant,
 }
 
 impl From<Session> for EditableSession {
@@ -63,12 +65,14 @@ impl From<Session> for EditableSession {
             notes: session.notes.clone().unwrap_or_default(),
             link: session.link.clone().unwrap_or_default(),
             is_background: session.is_background,
+            em_quadrant: session.em_quadrant(),
         }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum Field {
+    EmQuadrant,
     StartTime,
     EndTime,
     Background,
@@ -76,7 +80,8 @@ enum Field {
     Link,
 }
 
-const FIELDS: [Field; 5] = [
+const FIELDS: [Field; 6] = [
+    Field::EmQuadrant,
     Field::StartTime,
     Field::EndTime,
     Field::Background,
@@ -121,6 +126,7 @@ impl SessionEditForm {
             || self.session.notes != self.original.notes
             || self.session.link != self.original.link
             || self.session.is_background != self.original.is_background
+            || self.session.em_quadrant != self.original.em_quadrant
     }
 
     pub fn run(mut self) -> Result<SessionEditResult> {
@@ -268,6 +274,17 @@ impl SessionEditForm {
                         (_, KeyCode::Char('o')) => {
                             self.open_current_link();
                         }
+                        (_, KeyCode::Char('1' | '2' | '3' | '4')) => {
+                            if self.current_field == Field::EmQuadrant {
+                                self.session.em_quadrant = match key.code {
+                                    KeyCode::Char('1') => EmQuadrant::DoFirst,
+                                    KeyCode::Char('2') => EmQuadrant::Schedule,
+                                    KeyCode::Char('3') => EmQuadrant::Delegate,
+                                    KeyCode::Char('4') => EmQuadrant::Eliminate,
+                                    _ => self.session.em_quadrant,
+                                };
+                            }
+                        }
                         _ => {}
                     }
                 }
@@ -286,6 +303,11 @@ impl SessionEditForm {
 
     fn edit_current_field(&mut self) {
         match self.current_field {
+            Field::EmQuadrant => {
+                if let Some(quadrant) = super::em_selector::select_em_quadrant_or_default() {
+                    self.session.em_quadrant = quadrant;
+                }
+            }
             Field::StartTime => {
                 let local = Local.from_utc_datetime(&self.session.start.naive_utc());
                 self.text_buffer = local.format("%Y-%m-%d %H:%M").to_string();
@@ -321,6 +343,7 @@ impl SessionEditForm {
 
     fn apply_text_edit(&mut self) -> bool {
         match self.current_field {
+            Field::EmQuadrant => true,
             Field::StartTime => match parse_datetime_input(&self.text_buffer) {
                 Ok(dt) => {
                     self.session.start = dt;
@@ -399,6 +422,7 @@ impl SessionEditForm {
                 Some(self.session.link.clone())
             },
             is_background: self.session.is_background,
+            em_quadrant: self.session.em_quadrant,
         })
     }
 
@@ -569,6 +593,7 @@ impl SessionEditForm {
 
     fn get_field_display(&self, field: &Field) -> (String, String) {
         match field {
+            Field::EmQuadrant => ("EM".to_string(), self.session.em_quadrant.tag()),
             Field::StartTime => {
                 let local = Local.from_utc_datetime(&self.session.start.naive_utc());
                 (

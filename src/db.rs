@@ -211,6 +211,30 @@ fn run_migrations(conn: &Connection) -> Result<()> {
         )?;
     }
 
+    let em_urgent_exists: bool = conn
+        .query_row(
+            "SELECT EXISTS (SELECT 1 FROM pragma_table_info('sessions') WHERE name='em_urgent')",
+            [],
+            |row| row.get(0),
+        )
+        .unwrap_or(false);
+
+    if !em_urgent_exists {
+        conn.execute(
+            "ALTER TABLE sessions ADD COLUMN em_urgent INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+        conn.execute(
+            "ALTER TABLE sessions ADD COLUMN em_important INTEGER NOT NULL DEFAULT 0",
+            [],
+        )?;
+        conn.execute(
+            "UPDATE sessions SET em_urgent = (SELECT em_urgent FROM tasks WHERE tasks.id = sessions.task_id),
+                                em_important = (SELECT em_important FROM tasks WHERE tasks.id = sessions.task_id)",
+            [],
+        )?;
+    }
+
     Ok(())
 }
 

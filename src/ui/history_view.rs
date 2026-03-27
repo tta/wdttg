@@ -667,6 +667,8 @@ mod tests {
                 notes: None,
                 link: None,
                 is_background: false,
+                em_urgent: false,
+                em_important: true,
                 created_at: now,
             },
             task: Task {

@@ -58,14 +58,22 @@ impl SessionService {
 
         let tx = conn.unchecked_transaction()?;
 
+        let (em_urgent, em_important): (i32, i32) = conn
+            .query_row(
+                "SELECT em_urgent, em_important FROM tasks WHERE id = ?1",
+                params![task_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|_| SessionServiceError::TaskNotFound(task_id))?;
+
         conn.execute(
             "UPDATE sessions SET end_time = datetime('now') WHERE end_time IS NULL AND is_background = 0",
             [],
         )?;
 
         conn.execute(
-            "INSERT INTO sessions (task_id, start_time, link) VALUES (?1, datetime('now'), ?2)",
-            params![task_id, link],
+            "INSERT INTO sessions (task_id, start_time, link, em_urgent, em_important) VALUES (?1, datetime('now'), ?2, ?3, ?4)",
+            params![task_id, link, em_urgent, em_important],
         )?;
 
         let id = conn.last_insert_rowid();
@@ -106,7 +114,7 @@ impl SessionService {
         let conn = self.db.connection();
 
         let result = conn.query_row(
-            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.created_at,
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.em_urgent, s.em_important, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -128,7 +136,7 @@ impl SessionService {
         let conn = self.db.connection();
 
         let result = conn.query_row(
-            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.created_at,
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.em_urgent, s.em_important, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -150,7 +158,7 @@ impl SessionService {
         let conn = self.db.connection();
 
         let result = conn.query_row(
-            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.created_at,
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.em_urgent, s.em_important, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -183,9 +191,17 @@ impl SessionService {
             return Err(SessionServiceError::BackgroundAlreadyRunning);
         }
 
+        let (em_urgent, em_important): (i32, i32) = conn
+            .query_row(
+                "SELECT em_urgent, em_important FROM tasks WHERE id = ?1",
+                params![task_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|_| SessionServiceError::TaskNotFound(task_id))?;
+
         conn.execute(
-            "INSERT INTO sessions (task_id, start_time, link, is_background) VALUES (?1, datetime('now'), ?2, 1)",
-            params![task_id, link],
+            "INSERT INTO sessions (task_id, start_time, link, is_background, em_urgent, em_important) VALUES (?1, datetime('now'), ?2, 1, ?3, ?4)",
+            params![task_id, link, em_urgent, em_important],
         )?;
 
         let id = conn.last_insert_rowid();
@@ -235,7 +251,7 @@ impl SessionService {
         let end_str = format_sqlite_datetime(&end);
 
         let mut stmt = conn.prepare(
-            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.created_at,
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.em_urgent, s.em_important, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -295,7 +311,7 @@ impl SessionService {
                     session_id: swt.session.id,
                     task_id: swt.task.id,
                     task_name: swt.task.name.clone(),
-                    em_quadrant: swt.task.em_quadrant(),
+                    em_quadrant: swt.session.em_quadrant(),
                     total_seconds: total,
                     split_seconds: split,
                     overlap_seconds: overlap_total,
@@ -320,7 +336,7 @@ impl SessionService {
                     session_id: bg.session.id,
                     task_id: bg.task.id,
                     task_name: bg.task.name.clone(),
-                    em_quadrant: bg.task.em_quadrant(),
+                    em_quadrant: bg.session.em_quadrant(),
                     total_seconds: total,
                     split_seconds: split,
                     overlap_seconds: overlap_total,
@@ -376,6 +392,7 @@ impl SessionService {
         notes: Option<String>,
         link: Option<String>,
         is_background: Option<bool>,
+        em_quadrant: Option<crate::models::EmQuadrant>,
     ) -> Result<Session> {
         if let Some(end_time) = end {
             if end_time <= start {
@@ -412,16 +429,31 @@ impl SessionService {
         let start_str = format_sqlite_datetime(&start);
         let end_str = end.map(|dt| format_sqlite_datetime(&dt));
 
-        let rows_affected = if let Some(bg) = is_background {
-            conn.execute(
-                "UPDATE sessions SET start_time = ?1, end_time = ?2, notes = ?3, link = ?4, is_background = ?5 WHERE id = ?6",
-                params![start_str, end_str, notes, link, bg as i32, id],
-            )?
-        } else {
-            conn.execute(
-                "UPDATE sessions SET start_time = ?1, end_time = ?2, notes = ?3, link = ?4 WHERE id = ?5",
-                params![start_str, end_str, notes, link, id],
-            )?
+        let rows_affected = match (is_background, em_quadrant) {
+            (Some(bg), Some(em)) => {
+                conn.execute(
+                    "UPDATE sessions SET start_time = ?1, end_time = ?2, notes = ?3, link = ?4, is_background = ?5, em_urgent = ?6, em_important = ?7 WHERE id = ?8",
+                    params![start_str, end_str, notes, link, bg as i32, em.is_urgent() as i32, em.is_important() as i32, id],
+                )?
+            }
+            (Some(bg), None) => {
+                conn.execute(
+                    "UPDATE sessions SET start_time = ?1, end_time = ?2, notes = ?3, link = ?4, is_background = ?5 WHERE id = ?6",
+                    params![start_str, end_str, notes, link, bg as i32, id],
+                )?
+            }
+            (None, Some(em)) => {
+                conn.execute(
+                    "UPDATE sessions SET start_time = ?1, end_time = ?2, notes = ?3, link = ?4, em_urgent = ?5, em_important = ?6 WHERE id = ?7",
+                    params![start_str, end_str, notes, link, em.is_urgent() as i32, em.is_important() as i32, id],
+                )?
+            }
+            (None, None) => {
+                conn.execute(
+                    "UPDATE sessions SET start_time = ?1, end_time = ?2, notes = ?3, link = ?4 WHERE id = ?5",
+                    params![start_str, end_str, notes, link, id],
+                )?
+            }
         };
 
         if rows_affected == 0 {
@@ -449,7 +481,7 @@ impl SessionService {
         let conn = self.db.connection();
 
         let result = conn.query_row(
-            "SELECT id, task_id, start_time, end_time, notes, link, is_background, created_at FROM sessions WHERE id = ?1",
+            "SELECT id, task_id, start_time, end_time, notes, link, is_background, em_urgent, em_important, created_at FROM sessions WHERE id = ?1",
             params![id],
             |row| self.row_to_session(row),
         );
@@ -483,7 +515,7 @@ impl SessionService {
         let end_of_day = format_sqlite_datetime(&end_utc);
 
         let mut stmt = conn.prepare(
-            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.created_at,
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.em_urgent, s.em_important, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -559,7 +591,7 @@ impl SessionService {
                 });
             }
 
-            let quadrant = swt.task.em_quadrant();
+            let quadrant = swt.session.em_quadrant();
             blocks.push(TimeBlock {
                 session_id: Some(swt.session.id),
                 start: swt.session.start_time,
@@ -594,7 +626,7 @@ impl SessionService {
         let conn = self.db.connection();
 
         let mut stmt = conn.prepare(
-            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.created_at,
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.em_urgent, s.em_important, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -613,7 +645,7 @@ impl SessionService {
         let conn = self.db.connection();
 
         let result = conn.query_row(
-            "SELECT id, task_id, start_time, end_time, notes, link, is_background, created_at 
+            "SELECT id, task_id, start_time, end_time, notes, link, is_background, em_urgent, em_important, created_at 
              FROM sessions 
              WHERE task_id = ?1 
              ORDER BY start_time DESC 
@@ -633,7 +665,7 @@ impl SessionService {
         let conn = self.db.connection();
 
         let result = conn.query_row(
-            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.created_at,
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.em_urgent, s.em_important, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -659,12 +691,20 @@ impl SessionService {
     ) -> Result<Session> {
         let conn = self.db.connection();
 
+        let (em_urgent, em_important): (i32, i32) = conn
+            .query_row(
+                "SELECT em_urgent, em_important FROM tasks WHERE id = ?1",
+                params![task_id],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .map_err(|_| SessionServiceError::TaskNotFound(task_id))?;
+
         let start_str = format_sqlite_datetime(&start);
         let end_str = format_sqlite_datetime(&end);
 
         conn.execute(
-            "INSERT INTO sessions (task_id, start_time, end_time, link) VALUES (?1, ?2, ?3, ?4)",
-            params![task_id, start_str, end_str, link],
+            "INSERT INTO sessions (task_id, start_time, end_time, link, em_urgent, em_important) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![task_id, start_str, end_str, link, em_urgent, em_important],
         )?;
 
         let id = conn.last_insert_rowid();
@@ -681,7 +721,7 @@ impl SessionService {
         let end_str = format!("{} 23:59:59", end.format("%Y-%m-%d"));
 
         let mut stmt = conn.prepare(
-            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.created_at,
+            "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.em_urgent, s.em_important, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -879,7 +919,7 @@ impl SessionService {
         let end_str = format!("{} 23:59:59", end.format("%Y-%m-%d"));
 
         let mut stmt = conn.prepare(
-            "SELECT DISTINCT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.created_at,
+            "SELECT DISTINCT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.em_urgent, s.em_important, s.created_at,
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
@@ -906,7 +946,9 @@ impl SessionService {
         let notes: Option<String> = row.get(4)?;
         let link: Option<String> = row.get(5)?;
         let is_background: i32 = row.get(6)?;
-        let created_at_str: String = row.get(7)?;
+        let em_urgent: i32 = row.get(7)?;
+        let em_important: i32 = row.get(8)?;
+        let created_at_str: String = row.get(9)?;
 
         let start_time = parse_sqlite_datetime(&start_time_str)?;
         let end_time = end_time_str
@@ -922,6 +964,8 @@ impl SessionService {
             notes,
             link,
             is_background: is_background != 0,
+            em_urgent: em_urgent != 0,
+            em_important: em_important != 0,
             created_at,
         })
     }
@@ -932,19 +976,19 @@ impl SessionService {
     ) -> std::result::Result<SessionWithTask, rusqlite::Error> {
         let session = self.row_to_session(row)?;
 
-        let task_id: i64 = row.get(8)?;
-        let task_name: String = row.get(9)?;
-        let task_notes: Option<String> = row.get(10)?;
-        let em_urgent: i32 = row.get(11)?;
-        let em_important: i32 = row.get(12)?;
-        let status_str: String = row.get(13)?;
-        let recurring: i32 = row.get(14)?;
-        let task_created_at_str: String = row.get(15)?;
-        let task_updated_at_str: String = row.get(16)?;
+        let task_id: i64 = row.get(10)?;
+        let task_name: String = row.get(11)?;
+        let task_notes: Option<String> = row.get(12)?;
+        let em_urgent: i32 = row.get(13)?;
+        let em_important: i32 = row.get(14)?;
+        let status_str: String = row.get(15)?;
+        let recurring: i32 = row.get(16)?;
+        let task_created_at_str: String = row.get(17)?;
+        let task_updated_at_str: String = row.get(18)?;
 
         let status: TaskStatus = status_str.parse().map_err(|_| {
             rusqlite::Error::InvalidColumnType(
-                13,
+                15,
                 "status".to_string(),
                 rusqlite::types::Type::Text,
             )
@@ -1324,11 +1368,11 @@ mod tests {
 
         let conn = session_service.db.connection();
         conn.execute(
-            "INSERT INTO sessions (task_id, start_time, end_time, is_background) VALUES (?1, ?2, ?3, 0)",
+            "INSERT INTO sessions (task_id, start_time, end_time, is_background, em_urgent, em_important) VALUES (?1, ?2, ?3, 0, 0, 0)",
             params![fg_task.id, format_sqlite_datetime(&fg_start), format_sqlite_datetime(&fg_end)],
         ).unwrap();
         conn.execute(
-            "INSERT INTO sessions (task_id, start_time, end_time, is_background) VALUES (?1, ?2, ?3, 1)",
+            "INSERT INTO sessions (task_id, start_time, end_time, is_background, em_urgent, em_important) VALUES (?1, ?2, ?3, 1, 0, 0)",
             params![bg_task.id, format_sqlite_datetime(&bg_start), format_sqlite_datetime(&bg_end)],
         ).unwrap();
         drop(conn);
@@ -1366,11 +1410,11 @@ mod tests {
 
         let conn = session_service.db.connection();
         conn.execute(
-            "INSERT INTO sessions (task_id, start_time, end_time, is_background) VALUES (?1, ?2, ?3, 0)",
+            "INSERT INTO sessions (task_id, start_time, end_time, is_background, em_urgent, em_important) VALUES (?1, ?2, ?3, 0, 0, 0)",
             params![fg_task.id, format_sqlite_datetime(&fg_start), format_sqlite_datetime(&fg_end)],
         ).unwrap();
         conn.execute(
-            "INSERT INTO sessions (task_id, start_time, end_time, is_background) VALUES (?1, ?2, ?3, 1)",
+            "INSERT INTO sessions (task_id, start_time, end_time, is_background, em_urgent, em_important) VALUES (?1, ?2, ?3, 1, 0, 0)",
             params![bg_task.id, format_sqlite_datetime(&bg_start), format_sqlite_datetime(&bg_end)],
         ).unwrap();
         drop(conn);
@@ -1450,6 +1494,7 @@ mod tests {
                 Some("Test notes".to_string()),
                 None,
                 None,
+                None,
             )
             .unwrap();
 
@@ -1470,7 +1515,7 @@ mod tests {
             .unwrap();
 
         let updated = session_service
-            .update_full(session.id, new_start, None, None, None, None)
+            .update_full(session.id, new_start, None, None, None, None, None)
             .unwrap();
 
         assert_eq!(updated.start_time, new_start);
@@ -1488,7 +1533,8 @@ mod tests {
         let start = Utc::now();
         let end = start - chrono::Duration::hours(1);
 
-        let result = session_service.update_full(session.id, start, Some(end), None, None, None);
+        let result =
+            session_service.update_full(session.id, start, Some(end), None, None, None, None);
 
         assert!(result.is_err());
         assert!(matches!(
@@ -1501,7 +1547,7 @@ mod tests {
     fn test_update_full_not_found() {
         let (session_service, _) = create_test_services();
 
-        let result = session_service.update_full(9999, Utc::now(), None, None, None, None);
+        let result = session_service.update_full(9999, Utc::now(), None, None, None, None, None);
 
         assert!(result.is_err());
         assert!(matches!(
@@ -1678,6 +1724,8 @@ mod tests {
             notes: None,
             link: None,
             is_background: false,
+            em_urgent: false,
+            em_important: false,
             created_at: Utc::now(),
         };
 
@@ -1689,6 +1737,8 @@ mod tests {
             notes: None,
             link: None,
             is_background: true,
+            em_urgent: false,
+            em_important: false,
             created_at: Utc::now(),
         };
 
@@ -1708,6 +1758,8 @@ mod tests {
             notes: None,
             link: None,
             is_background: false,
+            em_urgent: false,
+            em_important: false,
             created_at: Utc::now(),
         };
 
@@ -1719,6 +1771,8 @@ mod tests {
             notes: None,
             link: None,
             is_background: true,
+            em_urgent: false,
+            em_important: false,
             created_at: Utc::now(),
         };
 
@@ -1743,11 +1797,11 @@ mod tests {
 
         let conn = session_service.db.connection();
         conn.execute(
-            "INSERT INTO sessions (task_id, start_time, end_time, is_background) VALUES (?1, ?2, ?3, 1)",
+            "INSERT INTO sessions (task_id, start_time, end_time, is_background, em_urgent, em_important) VALUES (?1, ?2, ?3, 1, 0, 0)",
             params![bg_task.id, format_sqlite_datetime(&bg_start), format_sqlite_datetime(&bg_end)],
         ).unwrap();
         conn.execute(
-            "INSERT INTO sessions (task_id, start_time, end_time, is_background) VALUES (?1, ?2, ?3, 0)",
+            "INSERT INTO sessions (task_id, start_time, end_time, is_background, em_urgent, em_important) VALUES (?1, ?2, ?3, 0, 0, 0)",
             params![fg_task.id, format_sqlite_datetime(&fg_start), format_sqlite_datetime(&fg_end)],
         ).unwrap();
         drop(conn);

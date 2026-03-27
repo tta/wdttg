@@ -10,6 +10,8 @@ pub struct Session {
     pub notes: Option<String>,
     pub link: Option<String>,
     pub is_background: bool,
+    pub em_urgent: bool,
+    pub em_important: bool,
     pub created_at: DateTime<Utc>,
 }
 
@@ -25,6 +27,10 @@ impl Session {
 
     pub fn duration_minutes(&self) -> Option<i64> {
         self.duration_seconds().map(|s| s / 60)
+    }
+
+    pub fn em_quadrant(&self) -> EmQuadrant {
+        EmQuadrant::new(self.em_urgent, self.em_important)
     }
 }
 
@@ -147,6 +153,8 @@ mod tests {
             notes: None,
             link: None,
             is_background: false,
+            em_urgent: false,
+            em_important: true,
             created_at: Utc::now(),
         };
         assert!(active_session.is_active());
@@ -159,6 +167,8 @@ mod tests {
             notes: None,
             link: None,
             is_background: false,
+            em_urgent: false,
+            em_important: true,
             created_at: Utc::now(),
         };
         assert!(!completed_session.is_active());
@@ -177,6 +187,8 @@ mod tests {
             notes: None,
             link: None,
             is_background: false,
+            em_urgent: false,
+            em_important: true,
             created_at: start,
         };
 
@@ -194,11 +206,44 @@ mod tests {
             notes: None,
             link: None,
             is_background: false,
+            em_urgent: false,
+            em_important: true,
             created_at: Utc::now(),
         };
 
         assert!(active_session.duration_seconds().is_none());
         assert!(active_session.duration_minutes().is_none());
+    }
+
+    #[test]
+    fn test_session_em_quadrant() {
+        let do_first = Session {
+            id: 1,
+            task_id: 1,
+            start_time: Utc::now(),
+            end_time: None,
+            notes: None,
+            link: None,
+            is_background: false,
+            em_urgent: true,
+            em_important: true,
+            created_at: Utc::now(),
+        };
+        assert_eq!(do_first.em_quadrant(), EmQuadrant::DoFirst);
+
+        let schedule = Session {
+            id: 2,
+            task_id: 1,
+            start_time: Utc::now(),
+            end_time: None,
+            notes: None,
+            link: None,
+            is_background: false,
+            em_urgent: false,
+            em_important: true,
+            created_at: Utc::now(),
+        };
+        assert_eq!(schedule.em_quadrant(), EmQuadrant::Schedule);
     }
 
     #[test]

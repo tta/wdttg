@@ -272,6 +272,23 @@ impl EditForm {
                         (_, KeyCode::Left) => {
                             self.adjust_field(-1);
                         }
+                        (_, KeyCode::Char('1' | '2' | '3' | '4')) => {
+                            if self.current_field == Field::EmQuadrant {
+                                use crate::models::EmQuadrant;
+                                let quadrant = match key.code {
+                                    KeyCode::Char('1') => EmQuadrant::DoFirst,
+                                    KeyCode::Char('2') => EmQuadrant::Schedule,
+                                    KeyCode::Char('3') => EmQuadrant::Delegate,
+                                    KeyCode::Char('4') => EmQuadrant::Eliminate,
+                                    _ => unreachable!(),
+                                };
+                                self.task.em_quadrant = quadrant;
+                                self.em_index = EM_OPTIONS
+                                    .iter()
+                                    .position(|(q, _)| *q == quadrant)
+                                    .unwrap_or(0);
+                            }
+                        }
                         _ => {}
                     }
                 }

@@ -51,9 +51,18 @@ fn handle_edit_session(session_id: i64, db: &Arc<Database>) -> Result<bool, Stri
             notes,
             link,
             is_background,
+            em_quadrant,
         } => {
             session_service
-                .update_full(session_id, start, end, notes, link, Some(is_background))
+                .update_full(
+                    session_id,
+                    start,
+                    end,
+                    notes,
+                    link,
+                    Some(is_background),
+                    Some(em_quadrant),
+                )
                 .map_err(|e| match e {
                     wdttg::SessionServiceError::BackgroundAlreadyRunning => {
                         "Cannot switch to background: another background task is already running"
