@@ -45,45 +45,21 @@ pub enum TimelineResult {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ZoomLevel {
     All,
-    Morning,
-    Afternoon,
-    Evening,
+    Fit,
 }
 
 impl ZoomLevel {
-    pub fn time_range(&self) -> (u32, u32) {
-        match self {
-            ZoomLevel::All => (0, 24),
-            ZoomLevel::Morning => (6, 12),
-            ZoomLevel::Afternoon => (12, 18),
-            ZoomLevel::Evening => (18, 24),
-        }
-    }
-
     pub fn title(&self) -> &'static str {
         match self {
             ZoomLevel::All => "full day",
-            ZoomLevel::Morning => "morning 06:00-12:00",
-            ZoomLevel::Afternoon => "afternoon 12:00-18:00",
-            ZoomLevel::Evening => "evening 18:00-24:00",
-        }
-    }
-
-    pub fn key(&self) -> char {
-        match self {
-            ZoomLevel::All => 'a',
-            ZoomLevel::Morning => '1',
-            ZoomLevel::Afternoon => '2',
-            ZoomLevel::Evening => '3',
+            ZoomLevel::Fit => "fit",
         }
     }
 
     pub fn from_key(key: char) -> Option<Self> {
         match key {
-            '1' => Some(ZoomLevel::Morning),
-            '2' => Some(ZoomLevel::Afternoon),
-            '3' => Some(ZoomLevel::Evening),
             'a' | 'A' => Some(ZoomLevel::All),
+            'f' | 'F' => Some(ZoomLevel::Fit),
             _ => None,
         }
     }
@@ -123,7 +99,7 @@ impl TimelineView {
         Self {
             blocks,
             date,
-            zoom: ZoomLevel::All,
+            zoom: ZoomLevel::Fit,
             terminal_width: 80,
             selected_index: 0,
             session_blocks: session_blocks.clone(),
@@ -387,6 +363,60 @@ impl TimelineView {
         }
     }
 
+    fn effective_time_range(&self) -> (u32, u32) {
+        match self.zoom {
+            ZoomLevel::All => (0, 24),
+            ZoomLevel::Fit => {
+                let mut earliest_hour: Option<u32> = None;
+                let mut latest_hour: Option<u32> = None;
+
+                for block in &self.blocks {
+                    if block.is_gap() {
+                        continue;
+                    }
+                    let local_start = Local.from_utc_datetime(&block.start.naive_utc());
+                    let start_hour = local_start.hour();
+
+                    let end_hour = if let Some(end) = block.end {
+                        let local_end = Local.from_utc_datetime(&end.naive_utc());
+                        let h = local_end.hour();
+                        let m = local_end.minute();
+                        if m > 0 {
+                            h + 1
+                        } else {
+                            h
+                        }
+                    } else {
+                        let now = Local::now();
+                        let h = now.hour();
+                        let m = now.minute();
+                        if m > 0 {
+                            h + 1
+                        } else {
+                            h
+                        }
+                    };
+
+                    if earliest_hour.map_or(true, |e| start_hour < e) {
+                        earliest_hour = Some(start_hour);
+                    }
+                    if latest_hour.map_or(true, |l| end_hour > l) {
+                        latest_hour = Some(end_hour);
+                    }
+                }
+
+                match (earliest_hour, latest_hour) {
+                    (Some(s), Some(e)) => {
+                        let start = s;
+                        let end = e.max(start + 1).min(24);
+                        (start, end)
+                    }
+                    _ => (0, 24),
+                }
+            }
+        }
+    }
+
     fn render(&self, f: &mut Frame) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
@@ -404,11 +434,18 @@ impl TimelineView {
     }
 
     fn render_title(&self, f: &mut Frame, area: Rect) {
-        let title = format!(
-            "Timeline for {} ({})",
-            self.date.format("%Y-%m-%d"),
-            self.zoom.title()
-        );
+        let title = match self.zoom {
+            ZoomLevel::All => format!("Timeline for {} (full day)", self.date.format("%Y-%m-%d"),),
+            ZoomLevel::Fit => {
+                let (s, e) = self.effective_time_range();
+                format!(
+                    "Timeline for {} ({:02}:00-{:02}:00)",
+                    self.date.format("%Y-%m-%d"),
+                    s,
+                    e,
+                )
+            }
+        };
 
         let paragraph = Paragraph::new(title).block(
             Block::default()
@@ -440,7 +477,7 @@ impl TimelineView {
             Style::default().fg(Color::DarkGray),
         ));
 
-        let (start_hour, end_hour) = self.zoom.time_range();
+        let (start_hour, end_hour) = self.effective_time_range();
         let visible_blocks: Vec<&TimeBlock> = self
             .blocks
             .iter()
@@ -516,7 +553,7 @@ impl TimelineView {
     }
 
     fn render_24h_bar(&self, width: usize) -> Vec<Span<'static>> {
-        let (start_hour, end_hour) = self.zoom.time_range();
+        let (start_hour, end_hour) = self.effective_time_range();
         let total_hours = (end_hour - start_hour) as f64;
         let mins_per_char = (total_hours * 60.0) / width as f64;
         let mut positions: Vec<(bool, Option<Color>)> = vec![(false, None); width];
@@ -614,11 +651,20 @@ impl TimelineView {
     }
 
     fn render_hour_markers(&self, width: usize) -> String {
-        let (start_hour, end_hour) = self.zoom.time_range();
+        let (start_hour, end_hour) = self.effective_time_range();
         let total_hours = (end_hour - start_hour) as f64;
         let mut result = vec![' '; width];
 
-        let hour_step = if total_hours <= 6.0 { 1 } else { 2 };
+        let chars_per_hour = width as f64 / total_hours;
+        let hour_step = if chars_per_hour >= 5.0 {
+            1
+        } else if chars_per_hour >= 2.5 {
+            2
+        } else if chars_per_hour >= 1.5 {
+            3
+        } else {
+            4
+        };
         let mut hour = start_hour;
         while hour <= end_hour {
             let pos = (((hour - start_hour) as f64 / total_hours) * width as f64) as usize;
@@ -757,8 +803,10 @@ impl TimelineView {
                 Span::raw(" Edit  "),
                 Span::styled("[O]", Style::default().fg(Color::Yellow)),
                 Span::raw(" Open Link  "),
-                Span::styled("[1-3/A]", Style::default().fg(Color::Yellow)),
-                Span::raw(" Zoom  "),
+                Span::styled("[F]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Fit  "),
+                Span::styled("[A]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Full day  "),
                 Span::styled("[/]", Style::default().fg(Color::Yellow)),
                 Span::raw(" Search  "),
                 Span::styled("[Q]", Style::default().fg(Color::Yellow)),
@@ -1008,20 +1056,71 @@ mod tests {
     use chrono::Utc;
 
     #[test]
-    fn test_zoom_level_time_range() {
-        assert_eq!(ZoomLevel::All.time_range(), (0, 24));
-        assert_eq!(ZoomLevel::Morning.time_range(), (6, 12));
-        assert_eq!(ZoomLevel::Afternoon.time_range(), (12, 18));
-        assert_eq!(ZoomLevel::Evening.time_range(), (18, 24));
+    fn test_effective_time_range_all() {
+        let blocks = create_test_blocks();
+        let mut view = TimelineView::new(blocks, Utc::now().date_naive());
+        view.zoom = ZoomLevel::All;
+        assert_eq!(view.effective_time_range(), (0, 24));
+    }
+
+    #[test]
+    fn test_effective_time_range_fit() {
+        let local_tz = Local::now().timezone();
+        let today = Local::now().date_naive();
+
+        let start_local = today.and_hms_opt(9, 15, 0).unwrap();
+        let end_local = today.and_hms_opt(16, 40, 0).unwrap();
+
+        let start_utc = local_tz
+            .from_local_datetime(&start_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+        let end_utc = local_tz
+            .from_local_datetime(&end_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let blocks = vec![TimeBlock {
+            session_id: Some(1),
+            start: start_utc,
+            end: Some(end_utc),
+            task: Some(create_test_task(1, "test-task")),
+            quadrant: Some(EmQuadrant::Schedule),
+            link: None,
+            is_background: false,
+        }];
+
+        let mut view = TimelineView::new(blocks, today);
+        view.zoom = ZoomLevel::Fit;
+        assert_eq!(view.effective_time_range(), (9, 17));
+    }
+
+    #[test]
+    fn test_effective_time_range_fit_empty() {
+        let now = Utc::now();
+        let blocks = vec![TimeBlock {
+            session_id: None,
+            start: now,
+            end: Some(now + chrono::Duration::hours(1)),
+            task: None,
+            quadrant: None,
+            link: None,
+            is_background: false,
+        }];
+
+        let mut view = TimelineView::new(blocks, Utc::now().date_naive());
+        view.zoom = ZoomLevel::Fit;
+        assert_eq!(view.effective_time_range(), (0, 24));
     }
 
     #[test]
     fn test_zoom_level_from_key() {
-        assert_eq!(ZoomLevel::from_key('1'), Some(ZoomLevel::Morning));
-        assert_eq!(ZoomLevel::from_key('2'), Some(ZoomLevel::Afternoon));
-        assert_eq!(ZoomLevel::from_key('3'), Some(ZoomLevel::Evening));
         assert_eq!(ZoomLevel::from_key('a'), Some(ZoomLevel::All));
         assert_eq!(ZoomLevel::from_key('A'), Some(ZoomLevel::All));
+        assert_eq!(ZoomLevel::from_key('f'), Some(ZoomLevel::Fit));
+        assert_eq!(ZoomLevel::from_key('F'), Some(ZoomLevel::Fit));
         assert_eq!(ZoomLevel::from_key('x'), None);
     }
 
