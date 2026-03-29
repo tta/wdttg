@@ -215,6 +215,11 @@ impl EditForm {
                                 self.text_buffer.remove(self.cursor_pos);
                             }
                         }
+                        (_, KeyCode::Delete) => {
+                            if self.cursor_pos < self.text_buffer.len() {
+                                self.text_buffer.remove(self.cursor_pos);
+                            }
+                        }
                         (_, KeyCode::Left) => {
                             if self.cursor_pos > 0 {
                                 let prev_char_len = self.text_buffer[..self.cursor_pos]
