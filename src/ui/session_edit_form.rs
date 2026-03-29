@@ -556,18 +556,36 @@ impl SessionEditForm {
                     value
                 };
 
-                let style = if is_selected || is_editing {
+                let sel_bg = if is_selected || is_editing {
+                    Some(Color::DarkGray)
+                } else {
+                    None
+                };
+
+                let apply_bg = |style: Style| {
+                    if let Some(bg) = sel_bg {
+                        style.bg(bg)
+                    } else {
+                        style
+                    }
+                };
+
+                let value_style = if is_selected || is_editing {
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(Color::White)
+                        .bg(Color::DarkGray)
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(Color::White)
                 };
 
                 ListItem::new(Line::from(vec![
-                    Span::styled(prefix, Style::default().fg(Color::Cyan)),
-                    Span::styled(format!("{:<10}: ", label), Style::default().fg(Color::Gray)),
-                    Span::styled(display_value, style),
+                    Span::styled(prefix, apply_bg(Style::default().fg(Color::Cyan))),
+                    Span::styled(
+                        format!("{:<10}: ", label),
+                        apply_bg(Style::default().fg(Color::Gray)),
+                    ),
+                    Span::styled(display_value, value_style),
                 ]))
             })
             .collect();

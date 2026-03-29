@@ -506,15 +506,30 @@ impl HistoryView {
 
                 let is_selected = selected_session_id == Some(session.id);
 
+                let sel_bg = if is_selected {
+                    Some(Color::DarkGray)
+                } else {
+                    None
+                };
+
+                let apply_bg = |style: Style| {
+                    if let Some(bg) = sel_bg {
+                        style.bg(bg)
+                    } else {
+                        style
+                    }
+                };
+
                 let prefix = if is_selected {
-                    Span::styled("▶ ", Style::default().fg(Color::Yellow))
+                    Span::styled("▶ ", apply_bg(Style::default().fg(Color::White)))
                 } else {
                     Span::raw("  ")
                 };
 
                 let name_style = if is_selected {
                     Style::default()
-                        .fg(Color::Yellow)
+                        .fg(color)
+                        .bg(Color::DarkGray)
                         .add_modifier(Modifier::BOLD)
                 } else {
                     Style::default().fg(color)
@@ -522,23 +537,30 @@ impl HistoryView {
 
                 let mut spans = vec![
                     prefix,
-                    Span::styled(time_str, Style::default().fg(Color::White)),
+                    Span::styled(time_str, apply_bg(Style::default().fg(Color::White))),
                     Span::raw(" "),
                     Span::styled(
                         format!("[{}]", duration_str),
-                        Style::default().fg(Color::Cyan),
+                        apply_bg(Style::default().fg(Color::Cyan)),
                     ),
                     Span::raw("  "),
                     Span::styled(task.name.clone(), name_style),
                     Span::raw(" "),
-                    Span::styled(em_tag.to_string(), Style::default().fg(Color::DarkGray)),
+                    Span::styled(
+                        em_tag.to_string(),
+                        apply_bg(Style::default().fg(if is_selected {
+                            Color::Gray
+                        } else {
+                            Color::DarkGray
+                        })),
+                    ),
                 ];
 
                 if let Some(link) = &session.link {
                     spans.push(Span::raw("  "));
                     spans.push(Span::styled(
                         link.clone(),
-                        Style::default().fg(Color::Magenta),
+                        apply_bg(Style::default().fg(Color::Magenta)),
                     ));
                 }
 

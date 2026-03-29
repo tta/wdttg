@@ -641,15 +641,30 @@ impl TimelineView {
 
         let is_selected = block.session_id.is_some() && block.session_id == selected_session_id;
 
+        let sel_bg = if is_selected {
+            Some(Color::DarkGray)
+        } else {
+            None
+        };
+
+        let apply_bg = |style: Style| {
+            if let Some(bg) = sel_bg {
+                style.bg(bg)
+            } else {
+                style
+            }
+        };
+
         let prefix = if is_selected {
-            Span::styled("▶ ", Style::default().fg(Color::Yellow))
+            Span::styled("▶ ", apply_bg(Style::default().fg(Color::White)))
         } else {
             Span::raw("  ")
         };
 
         let name_style = if is_selected {
             Style::default()
-                .fg(Color::Yellow)
+                .fg(color)
+                .bg(Color::DarkGray)
                 .add_modifier(Modifier::BOLD)
         } else {
             Style::default().fg(color)
@@ -657,22 +672,29 @@ impl TimelineView {
 
         let mut spans = vec![
             prefix,
-            Span::styled(time_str, Style::default().fg(Color::White)),
+            Span::styled(time_str, apply_bg(Style::default().fg(Color::White))),
             Span::raw(" "),
             Span::styled(
                 format!("[{}]", duration_str),
-                Style::default().fg(Color::Cyan),
+                apply_bg(Style::default().fg(Color::Cyan)),
             ),
             Span::raw("  "),
             Span::styled(name, name_style),
             Span::raw(" "),
-            Span::styled(em_tag, Style::default().fg(Color::DarkGray)),
+            Span::styled(
+                em_tag,
+                apply_bg(Style::default().fg(if is_selected {
+                    Color::Gray
+                } else {
+                    Color::DarkGray
+                })),
+            ),
         ];
 
         if !bg_indicator.is_empty() {
             spans.push(Span::styled(
                 bg_indicator,
-                Style::default().fg(Color::Magenta),
+                apply_bg(Style::default().fg(Color::Magenta)),
             ));
         }
 
@@ -683,12 +705,18 @@ impl TimelineView {
 
         if is_overlapping {
             spans.push(Span::raw(" "));
-            spans.push(Span::styled("⚡", Style::default().fg(Color::Yellow)));
+            spans.push(Span::styled(
+                "⚡",
+                apply_bg(Style::default().fg(Color::Yellow)),
+            ));
         }
 
         if let Some(link_text) = link {
             spans.push(Span::raw("  "));
-            spans.push(Span::styled(link_text, Style::default().fg(Color::Magenta)));
+            spans.push(Span::styled(
+                link_text,
+                apply_bg(Style::default().fg(Color::Magenta)),
+            ));
         }
 
         Some(Line::from(spans))

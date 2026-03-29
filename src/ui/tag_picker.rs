@@ -10,7 +10,7 @@ use fuzzy_matcher::FuzzyMatcher;
 use ratatui::{
     backend::CrosstermBackend,
     layout::{Constraint, Direction, Layout, Rect},
-    style::{Color, Style},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame, Terminal,
@@ -421,7 +421,11 @@ impl TagPicker {
 
             let list = List::new(items)
                 .block(Block::default().borders(Borders::ALL))
-                .highlight_style(Style::default().fg(Color::Yellow))
+                .highlight_style(
+                    Style::default()
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
+                )
                 .highlight_symbol("> ");
 
             f.render_stateful_widget(list, area, &mut self.filtered_state);
@@ -441,7 +445,11 @@ impl TagPicker {
 
             let list = List::new(items)
                 .block(Block::default().borders(Borders::ALL))
-                .highlight_style(Style::default().fg(Color::Yellow))
+                .highlight_style(
+                    Style::default()
+                        .bg(Color::DarkGray)
+                        .add_modifier(Modifier::BOLD),
+                )
                 .highlight_symbol("> ");
 
             f.render_stateful_widget(list, area, &mut self.state);
