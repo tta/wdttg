@@ -384,6 +384,7 @@ impl SessionService {
         Ok(())
     }
 
+    #[allow(clippy::too_many_arguments)]
     pub fn update_full(
         &self,
         id: i64,
