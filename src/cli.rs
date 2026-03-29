@@ -98,6 +98,15 @@ pub enum Commands {
         link: Option<String>,
     },
 
+    #[clap(about = "Show timeline for a specific date (today, yesterday, YYYY-MM-DD)")]
+    Timeline {
+        #[arg(
+            default_value = "today",
+            help = "Date to show (today, yesterday, YYYY-MM-DD)"
+        )]
+        date: String,
+    },
+
     #[clap(about = "Generate time reports")]
     Report {
         #[command(subcommand)]
@@ -135,15 +144,6 @@ pub enum ReportCommands {
     Tag {
         #[arg(default_value = "week", help = "Time period (day, week, month)")]
         period: String,
-    },
-
-    #[clap(about = "Show timeline for a specific date (today, yesterday, YYYY-MM-DD)")]
-    Timeline {
-        #[arg(
-            default_value = "today",
-            help = "Date to show (today, yesterday, YYYY-MM-DD)"
-        )]
-        date: String,
     },
 
     #[clap(about = "Browse sessions by tag")]

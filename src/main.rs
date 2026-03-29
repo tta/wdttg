@@ -1471,13 +1471,11 @@ fn main() {
             cli.no_prompt,
             &db,
         ),
+        Commands::Timeline { date } => handle_report_timeline(&date, cli.no_prompt, &db),
         Commands::Report { report_type } => match report_type {
             wdttg::ReportCommands::Quadrant { period } => handle_report_quadrant(&period, &db),
             wdttg::ReportCommands::Task { period } => handle_report_task(&period, &db),
             wdttg::ReportCommands::Tag { period } => handle_report_tag(&period, &db),
-            wdttg::ReportCommands::Timeline { date } => {
-                handle_report_timeline(&date, cli.no_prompt, &db)
-            }
             wdttg::ReportCommands::History { tag, period, limit } => {
                 handle_report_history(tag.as_deref(), &period, limit, cli.no_prompt, &db)
             }

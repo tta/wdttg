@@ -198,8 +198,16 @@ mod cli_tests {
             .stdout(predicate::str::contains("quadrant"))
             .stdout(predicate::str::contains("task"))
             .stdout(predicate::str::contains("tag"))
-            .stdout(predicate::str::contains("timeline"))
             .stdout(predicate::str::contains("history"));
+    }
+
+    #[test]
+    fn test_timeline_command() {
+        let mut cmd = Command::cargo_bin("wdttg").unwrap();
+        cmd.args(["timeline", "--help"])
+            .assert()
+            .success()
+            .stdout(predicate::str::contains("Date to show"));
     }
 
     #[test]
