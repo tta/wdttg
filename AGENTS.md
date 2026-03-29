@@ -67,21 +67,29 @@ Environment variables (can be set via `.env` file):
 ```
 wdttg/
 ├── src/
-│   ├── main.rs          # CLI entry point, command handlers
-│   ├── cli.rs           # Clap CLI definitions
-│   ├── db.rs            # SQLite database layer
-│   ├── clipboard.rs     # Clipboard and note path utilities
-│   ├── models/          # Data structures
-│   │   ├── task.rs
-│   │   └── session.rs
-│   ├── services/        # Business logic
-│   │   ├── task_service.rs
-│   │   └── session_service.rs
-│   └── ui/              # TUI components
-│       ├── picker.rs
-│       ├── timeline.rs
-│       ├── history_view.rs
-│       ├── tag_picker.rs
-│       └── ...
-└── .env                 # Local configuration
+│   ├── main.rs              # CLI entry point, command handlers
+│   ├── cli.rs               # Clap CLI definitions
+│   ├── db.rs                # SQLite database layer, migrations
+│   ├── config.rs            # Config file handling
+│   ├── time_parser.rs       # Flexible time parsing
+│   ├── clipboard.rs         # Clipboard and note path utilities
+│   ├── lib.rs               # Library exports
+│   ├── models/              # Data structures (no DB logic)
+│   │   ├── mod.rs
+│   │   ├── task.rs          # Task, TaskStatus, EmQuadrant
+│   │   └── session.rs       # Session, SessionWithTask, aggregations
+│   ├── services/            # Business logic, DB operations
+│   │   ├── mod.rs
+│   │   ├── task_service.rs  # Task CRUD, tag extraction
+│   │   └── session_service.rs # Time tracking, reports, overlaps
+│   └── ui/                  # TUI components (ratatui)
+│       ├── mod.rs
+│       ├── picker.rs        # Task picker with fuzzy search
+│       ├── timeline.rs      # Day timeline view
+│       ├── history_view.rs  # Session history browser
+│       ├── tag_picker.rs    # Tag selection
+│       ├── edit_form.rs     # Task editing
+│       ├── session_edit_form.rs # Session editing
+│       └── em_selector.rs   # Eisenhower Matrix quadrant picker
+└── .env                     # Local configuration
 ```

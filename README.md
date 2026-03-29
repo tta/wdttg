@@ -14,7 +14,7 @@ cargo install --path .
 
 ### Requirements
 - Rust 1.70+
-- SQLite3 (included)
+- SQLite3 (system dependency)
 
 ## Quick Start
 
@@ -45,9 +45,17 @@ wdttg report tag week
 | Command | Description |
 |---------|-------------|
 | `wdttg start [query]` | Start tracking a task (opens picker if no query) |
+| `wdttg start [query] --em 11` | Start with EM quadrant (00, 01, 10, 11) |
+| `wdttg start [query] --link <url>` | Start with link to external resource |
+| `wdttg start [query] --bg` | Start as background task |
 | `wdttg stop` | Stop the active timer |
+| `wdttg stop --all` | Stop all active timers (foreground and background) |
+| `wdttg stop --task <name>` | Stop timer for a specific task |
 | `wdttg status` | Show current timer status |
 | `wdttg log` | Add a retrospective time entry |
+| `wdttg log --task <name> --start <time> --end <time>` | Log with specific times |
+| `wdttg log ... --em 11` | Log with EM quadrant |
+| `wdttg log ... --link <url>` | Log with link to external resource |
 
 ### Task Management
 
@@ -57,6 +65,17 @@ wdttg report tag week
 | `wdttg reopen [query]` | Reopen a completed task |
 | `wdttg archive [query]` | Archive a task |
 | `wdttg edit [query]` | Edit task properties |
+| `wdttg edit [query] --name <name>` | Rename task |
+| `wdttg edit [query] --notes <text>` | Set task notes |
+| `wdttg edit [query] --em 11` | Set EM quadrant |
+| `wdttg edit [query] --status <status>` | Set status (active, completed, archived) |
+| `wdttg edit [query] --recurring <bool>` | Set recurring flag |
+
+### Timeline
+
+| Command | Description |
+|---------|-------------|
+| `wdttg timeline [date]` | Visual timeline of a day (default: today) |
 
 ### Reports
 
@@ -65,8 +84,8 @@ wdttg report tag week
 | `wdttg report quadrant [period]` | Time by Eisenhower Matrix quadrant |
 | `wdttg report task [period]` | Time by task |
 | `wdttg report tag [period]` | Time by tag |
-| `wdttg report timeline [date]` | Visual timeline of a day |
 | `wdttg report history [tag]` | Browse sessions by tag (TUI) |
+| `wdttg report history --period month --limit 50` | History with custom period and limit |
 
 ### Utility
 
