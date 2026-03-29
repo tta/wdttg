@@ -519,7 +519,7 @@ impl SessionService {
                     t.id, t.name, t.notes, t.em_urgent, t.em_important, t.status, t.recurring, t.created_at, t.updated_at
              FROM sessions s
              INNER JOIN tasks t ON s.task_id = t.id
-             WHERE s.start_time >= ?1 AND s.start_time <= ?2
+             WHERE s.start_time <= ?2 AND (s.end_time IS NULL OR s.end_time >= ?1)
              ORDER BY s.start_time ASC",
         )?;
 
@@ -567,23 +567,30 @@ impl SessionService {
                 }
             });
 
+            let clamped_start = swt.session.start_time.max(start_of_day);
+            let clamped_end = session_end.min(end_of_day);
+
+            if clamped_start >= clamped_end {
+                continue;
+            }
+
             if let Some(prev_end) = last_end {
-                if swt.session.start_time > prev_end {
+                if clamped_start > prev_end {
                     blocks.push(TimeBlock {
                         session_id: None,
                         start: prev_end,
-                        end: Some(swt.session.start_time),
+                        end: Some(clamped_start),
                         task: None,
                         quadrant: None,
                         link: None,
                         is_background: false,
                     });
                 }
-            } else if swt.session.start_time > start_of_day {
+            } else if clamped_start > start_of_day {
                 blocks.push(TimeBlock {
                     session_id: None,
                     start: start_of_day,
-                    end: Some(swt.session.start_time),
+                    end: Some(clamped_start),
                     task: None,
                     quadrant: None,
                     link: None,
@@ -594,15 +601,15 @@ impl SessionService {
             let quadrant = swt.session.em_quadrant();
             blocks.push(TimeBlock {
                 session_id: Some(swt.session.id),
-                start: swt.session.start_time,
-                end: Some(session_end),
+                start: clamped_start,
+                end: Some(clamped_end),
                 task: Some(swt.task),
                 quadrant: Some(quadrant),
                 link: swt.session.link.clone(),
                 is_background: swt.session.is_background,
             });
 
-            last_end = Some(session_end);
+            last_end = Some(clamped_end);
         }
 
         if let Some(prev_end) = last_end {
@@ -1863,5 +1870,303 @@ mod tests {
 
         assert_eq!(overlaps.len(), 1);
         assert_eq!(overlaps[0].task.name, "existing-task");
+    }
+
+    #[test]
+    fn test_get_day_returns_session_spanning_previous_midnight() {
+        use chrono::TimeZone;
+
+        let (session_service, task_service) = create_test_services();
+        let local_tz = Local::now().timezone();
+
+        let task = task_service.get_or_create("overnight-task").unwrap();
+
+        let today = Local::now().date_naive();
+        let yesterday = today - chrono::Duration::days(1);
+
+        let start_local = yesterday.and_hms_opt(23, 0, 0).unwrap();
+        let end_local = today.and_hms_opt(1, 0, 0).unwrap();
+
+        let start_utc: DateTime<Utc> = local_tz
+            .from_local_datetime(&start_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+        let end_utc: DateTime<Utc> = local_tz
+            .from_local_datetime(&end_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+
+        session_service
+            .log_session(task.id, start_utc, end_utc, None)
+            .unwrap();
+
+        let sessions = session_service.get_day(today).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].task.name, "overnight-task");
+    }
+
+    #[test]
+    fn test_get_day_returns_session_starting_today_spanning_midnight() {
+        use chrono::TimeZone;
+
+        let (session_service, task_service) = create_test_services();
+        let local_tz = Local::now().timezone();
+
+        let task = task_service.get_or_create("overnight-task").unwrap();
+
+        let today = Local::now().date_naive();
+        let tomorrow = today + chrono::Duration::days(1);
+
+        let start_local = today.and_hms_opt(23, 0, 0).unwrap();
+        let end_local = tomorrow.and_hms_opt(1, 0, 0).unwrap();
+
+        let start_utc: DateTime<Utc> = local_tz
+            .from_local_datetime(&start_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+        let end_utc: DateTime<Utc> = local_tz
+            .from_local_datetime(&end_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+
+        session_service
+            .log_session(task.id, start_utc, end_utc, None)
+            .unwrap();
+
+        let sessions = session_service.get_day(today).unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].task.name, "overnight-task");
+    }
+
+    #[test]
+    fn test_get_day_with_gaps_clamps_session_from_previous_day() {
+        use chrono::TimeZone;
+
+        let (session_service, task_service) = create_test_services();
+        let local_tz = Local::now().timezone();
+
+        let task = task_service.get_or_create("overnight-task").unwrap();
+
+        let today = Local::now().date_naive();
+        let yesterday = today - chrono::Duration::days(1);
+
+        let start_local = yesterday.and_hms_opt(23, 0, 0).unwrap();
+        let end_local = today.and_hms_opt(1, 0, 0).unwrap();
+
+        let start_utc: DateTime<Utc> = local_tz
+            .from_local_datetime(&start_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+        let end_utc: DateTime<Utc> = local_tz
+            .from_local_datetime(&end_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+
+        session_service
+            .log_session(task.id, start_utc, end_utc, None)
+            .unwrap();
+
+        let blocks = session_service.get_day_with_gaps(today).unwrap();
+
+        let session_blocks: Vec<&TimeBlock> = blocks.iter().filter(|b| !b.is_gap()).collect();
+        assert_eq!(session_blocks.len(), 1);
+
+        let block = session_blocks[0];
+        let local_start = Local.from_utc_datetime(&block.start.naive_utc());
+        let local_end = Local.from_utc_datetime(&block.end.unwrap().naive_utc());
+
+        assert_eq!(local_start.hour(), 0);
+        assert_eq!(local_start.minute(), 0);
+        assert_eq!(local_end.hour(), 1);
+        assert_eq!(local_end.minute(), 0);
+        assert_eq!(block.duration_seconds(), Some(3600));
+    }
+
+    #[test]
+    fn test_get_day_with_gaps_clamps_session_spanning_to_next_day() {
+        use chrono::TimeZone;
+
+        let (session_service, task_service) = create_test_services();
+        let local_tz = Local::now().timezone();
+
+        let task = task_service.get_or_create("overnight-task").unwrap();
+
+        let today = Local::now().date_naive();
+        let tomorrow = today + chrono::Duration::days(1);
+
+        let start_local = today.and_hms_opt(23, 0, 0).unwrap();
+        let end_local = tomorrow.and_hms_opt(1, 0, 0).unwrap();
+
+        let start_utc: DateTime<Utc> = local_tz
+            .from_local_datetime(&start_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+        let end_utc: DateTime<Utc> = local_tz
+            .from_local_datetime(&end_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+
+        session_service
+            .log_session(task.id, start_utc, end_utc, None)
+            .unwrap();
+
+        let blocks = session_service.get_day_with_gaps(today).unwrap();
+
+        let session_blocks: Vec<&TimeBlock> = blocks.iter().filter(|b| !b.is_gap()).collect();
+        assert_eq!(session_blocks.len(), 1);
+
+        let block = session_blocks[0];
+        let local_start = Local.from_utc_datetime(&block.start.naive_utc());
+        let local_end = Local.from_utc_datetime(&block.end.unwrap().naive_utc());
+
+        assert_eq!(local_start.hour(), 23);
+        assert_eq!(local_start.minute(), 0);
+        assert_eq!(local_end.hour(), 23);
+        assert_eq!(local_end.minute(), 59);
+    }
+
+    #[test]
+    fn test_get_day_with_gaps_multi_day_session() {
+        use chrono::TimeZone;
+
+        let (session_service, task_service) = create_test_services();
+        let local_tz = Local::now().timezone();
+
+        let task = task_service.get_or_create("multi-day-task").unwrap();
+
+        let day_minus_1 = Local::now().date_naive() - chrono::Duration::days(1);
+        let today = Local::now().date_naive();
+        let day_plus_1 = today + chrono::Duration::days(1);
+
+        let start_local = day_minus_1.and_hms_opt(23, 0, 0).unwrap();
+        let end_local = day_plus_1.and_hms_opt(1, 0, 0).unwrap();
+
+        let start_utc: DateTime<Utc> = local_tz
+            .from_local_datetime(&start_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+        let end_utc: DateTime<Utc> = local_tz
+            .from_local_datetime(&end_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+
+        session_service
+            .log_session(task.id, start_utc, end_utc, None)
+            .unwrap();
+
+        let blocks_prev = session_service.get_day_with_gaps(day_minus_1).unwrap();
+        let session_blocks_prev: Vec<&TimeBlock> =
+            blocks_prev.iter().filter(|b| !b.is_gap()).collect();
+        assert_eq!(session_blocks_prev.len(), 1);
+        let prev = session_blocks_prev[0];
+        let prev_start = Local.from_utc_datetime(&prev.start.naive_utc());
+        let prev_end = Local.from_utc_datetime(&prev.end.unwrap().naive_utc());
+        assert_eq!(prev_start.hour(), 23);
+        assert_eq!(prev_end.hour(), 23);
+        assert_eq!(prev_end.minute(), 59);
+
+        let blocks_today = session_service.get_day_with_gaps(today).unwrap();
+        let session_blocks_today: Vec<&TimeBlock> =
+            blocks_today.iter().filter(|b| !b.is_gap()).collect();
+        assert_eq!(session_blocks_today.len(), 1);
+        let cur = session_blocks_today[0];
+        let cur_start = Local.from_utc_datetime(&cur.start.naive_utc());
+        let cur_end = Local.from_utc_datetime(&cur.end.unwrap().naive_utc());
+        assert_eq!(cur_start.hour(), 0);
+        assert_eq!(cur_start.minute(), 0);
+        assert_eq!(cur_end.hour(), 23);
+        assert_eq!(cur_end.minute(), 59);
+
+        let blocks_next = session_service.get_day_with_gaps(day_plus_1).unwrap();
+        let session_blocks_next: Vec<&TimeBlock> =
+            blocks_next.iter().filter(|b| !b.is_gap()).collect();
+        assert_eq!(session_blocks_next.len(), 1);
+        let nxt = session_blocks_next[0];
+        let nxt_start = Local.from_utc_datetime(&nxt.start.naive_utc());
+        let nxt_end = Local.from_utc_datetime(&nxt.end.unwrap().naive_utc());
+        assert_eq!(nxt_start.hour(), 0);
+        assert_eq!(nxt_start.minute(), 0);
+        assert_eq!(nxt_end.hour(), 1);
+        assert_eq!(nxt_end.minute(), 0);
+        assert_eq!(nxt.duration_seconds(), Some(3600));
+    }
+
+    #[test]
+    fn test_get_day_with_gaps_midnight_session_with_other_sessions() {
+        use chrono::TimeZone;
+
+        let (session_service, task_service) = create_test_services();
+        let local_tz = Local::now().timezone();
+
+        let task1 = task_service.get_or_create("overnight-task").unwrap();
+        let task2 = task_service.get_or_create("morning-task").unwrap();
+
+        let today = Local::now().date_naive();
+        let yesterday = today - chrono::Duration::days(1);
+
+        let overnight_start_local = yesterday.and_hms_opt(23, 0, 0).unwrap();
+        let overnight_end_local = today.and_hms_opt(1, 0, 0).unwrap();
+        let overnight_start_utc: DateTime<Utc> = local_tz
+            .from_local_datetime(&overnight_start_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+        let overnight_end_utc: DateTime<Utc> = local_tz
+            .from_local_datetime(&overnight_end_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+
+        session_service
+            .log_session(task1.id, overnight_start_utc, overnight_end_utc, None)
+            .unwrap();
+
+        let morning_start_local = today.and_hms_opt(10, 0, 0).unwrap();
+        let morning_end_local = today.and_hms_opt(11, 0, 0).unwrap();
+        let morning_start_utc: DateTime<Utc> = local_tz
+            .from_local_datetime(&morning_start_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+        let morning_end_utc: DateTime<Utc> = local_tz
+            .from_local_datetime(&morning_end_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+
+        session_service
+            .log_session(task2.id, morning_start_utc, morning_end_utc, None)
+            .unwrap();
+
+        let blocks = session_service.get_day_with_gaps(today).unwrap();
+
+        let session_blocks: Vec<&TimeBlock> = blocks.iter().filter(|b| !b.is_gap()).collect();
+        assert_eq!(session_blocks.len(), 2);
+
+        let gap_blocks: Vec<&TimeBlock> = blocks
+            .iter()
+            .filter(|b| b.is_gap() && b.session_id.is_none())
+            .collect();
+        assert!(gap_blocks.len() >= 1);
+
+        let gap_between = gap_blocks
+            .iter()
+            .find(|g| {
+                let gap_start = Local.from_utc_datetime(&g.start.naive_utc());
+                let gap_end = Local.from_utc_datetime(&g.end.unwrap().naive_utc());
+                gap_start.hour() == 1 && gap_end.hour() == 10
+            })
+            .expect("should have gap between overnight and morning sessions");
+        assert_eq!(gap_between.duration_seconds(), Some(9 * 3600));
     }
 }

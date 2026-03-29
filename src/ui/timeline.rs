@@ -537,11 +537,13 @@ impl TimelineView {
             let start_idx = (visible_start / mins_per_char) as usize;
             let end_idx = ((visible_end / mins_per_char) as usize).min(width);
 
-            for pos in &mut positions[start_idx..end_idx] {
-                if pos.1.is_some() {
-                    pos.0 = true;
-                } else {
-                    pos.1 = color;
+            if start_idx < end_idx {
+                for pos in &mut positions[start_idx..end_idx] {
+                    if pos.1.is_some() {
+                        pos.0 = true;
+                    } else {
+                        pos.1 = color;
+                    }
                 }
             }
         }
@@ -1305,5 +1307,112 @@ mod tests {
         assert_eq!(overlapping.len(), 2);
         assert!(overlapping.contains(&1));
         assert!(overlapping.contains(&2));
+    }
+
+    #[test]
+    fn test_render_24h_bar_midnight_spanning_session_no_panic() {
+        let local_tz = Local::now().timezone();
+        let today = Local::now().date_naive();
+        let tomorrow = today + chrono::Duration::days(1);
+
+        let start_local = today.and_hms_opt(23, 0, 0).unwrap();
+        let end_local = tomorrow.and_hms_opt(1, 0, 0).unwrap();
+
+        let start_utc = local_tz
+            .from_local_datetime(&start_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+        let end_utc = local_tz
+            .from_local_datetime(&end_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let blocks = vec![TimeBlock {
+            session_id: Some(1),
+            start: start_utc,
+            end: Some(end_utc),
+            task: Some(create_test_task(1, "midnight-task")),
+            quadrant: Some(EmQuadrant::Schedule),
+            link: None,
+            is_background: false,
+        }];
+
+        let view = TimelineView::new(blocks, today);
+        let _spans = view.render_24h_bar(78);
+    }
+
+    #[test]
+    fn test_render_24h_bar_clamped_session_renders_correctly() {
+        let local_tz = Local::now().timezone();
+        let today = Local::now().date_naive();
+
+        let start_local = today.and_hms_opt(23, 0, 0).unwrap();
+        let end_local = today.and_hms_opt(23, 59, 59).unwrap();
+
+        let start_utc = local_tz
+            .from_local_datetime(&start_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+        let end_utc = local_tz
+            .from_local_datetime(&end_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let blocks = vec![TimeBlock {
+            session_id: Some(1),
+            start: start_utc,
+            end: Some(end_utc),
+            task: Some(create_test_task(1, "clamped-task")),
+            quadrant: Some(EmQuadrant::Schedule),
+            link: None,
+            is_background: false,
+        }];
+
+        let view = TimelineView::new(blocks, today);
+        let spans = view.render_24h_bar(78);
+
+        let filled: String = spans
+            .iter()
+            .flat_map(|s| s.content.chars())
+            .filter(|c| *c != ' ')
+            .collect();
+        assert!(!filled.is_empty());
+    }
+
+    #[test]
+    fn test_print_24h_bar_static_midnight_spanning_no_panic() {
+        let local_tz = Local::now().timezone();
+        let today = Local::now().date_naive();
+        let tomorrow = today + chrono::Duration::days(1);
+
+        let start_local = today.and_hms_opt(23, 0, 0).unwrap();
+        let end_local = tomorrow.and_hms_opt(1, 0, 0).unwrap();
+
+        let start_utc = local_tz
+            .from_local_datetime(&start_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+        let end_utc = local_tz
+            .from_local_datetime(&end_local)
+            .single()
+            .unwrap()
+            .with_timezone(&Utc);
+
+        let blocks = vec![TimeBlock {
+            session_id: Some(1),
+            start: start_utc,
+            end: Some(end_utc),
+            task: Some(create_test_task(1, "midnight-task")),
+            quadrant: Some(EmQuadrant::Schedule),
+            link: None,
+            is_background: false,
+        }];
+
+        print_24h_bar_static(&blocks, 78);
     }
 }
