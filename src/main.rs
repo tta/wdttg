@@ -1162,9 +1162,13 @@ fn handle_report_tag(period: &str, db: &Arc<Database>) -> Result<(), String> {
     Ok(())
 }
 
-fn handle_report_timeline(date: &str, no_prompt: bool, db: &Arc<Database>) -> Result<(), String> {
+fn handle_report_timeline(
+    date_str: &str,
+    no_prompt: bool,
+    db: &Arc<Database>,
+) -> Result<(), String> {
     let session_service = SessionService::new(Arc::clone(db));
-    let date = parse_date(date).map_err(|e| e.to_string())?;
+    let mut date = parse_date(date_str).map_err(|e| e.to_string())?;
 
     let blocks = session_service
         .get_day_with_gaps(date)
@@ -1184,6 +1188,27 @@ fn handle_report_timeline(date: &str, no_prompt: bool, db: &Arc<Database>) -> Re
                 TimelineResult::Cancelled | TimelineResult::Closed => break,
                 TimelineResult::EditSession(session_id) => {
                     handle_edit_session(session_id, db)?;
+                    let blocks = session_service
+                        .get_day_with_gaps(date)
+                        .map_err(|e| e.to_string())?;
+                    view = TimelineView::new(blocks, date);
+                }
+                TimelineResult::PrevDay => {
+                    date -= chrono::Duration::days(1);
+                    let blocks = session_service
+                        .get_day_with_gaps(date)
+                        .map_err(|e| e.to_string())?;
+                    view = TimelineView::new(blocks, date);
+                }
+                TimelineResult::NextDay => {
+                    date += chrono::Duration::days(1);
+                    let blocks = session_service
+                        .get_day_with_gaps(date)
+                        .map_err(|e| e.to_string())?;
+                    view = TimelineView::new(blocks, date);
+                }
+                TimelineResult::Today => {
+                    date = chrono::Local::now().date_naive();
                     let blocks = session_service
                         .get_day_with_gaps(date)
                         .map_err(|e| e.to_string())?;

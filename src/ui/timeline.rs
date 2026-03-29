@@ -37,6 +37,9 @@ pub enum TimelineResult {
     Closed,
     Cancelled,
     EditSession(i64),
+    PrevDay,
+    NextDay,
+    Today,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -230,11 +233,19 @@ impl TimelineView {
                             (_, KeyCode::Down) | (_, KeyCode::Char('j')) => {
                                 self.select_next_session();
                             }
+                            (_, KeyCode::Left) | (_, KeyCode::Char('h')) => {
+                                return Ok(TimelineResult::PrevDay);
+                            }
+                            (_, KeyCode::Right) | (_, KeyCode::Char('l')) => {
+                                return Ok(TimelineResult::NextDay);
+                            }
                             (_, KeyCode::Char(c)) => {
                                 if let Some(zoom) = ZoomLevel::from_key(c) {
                                     self.zoom = zoom;
                                 } else if c == 'o' || c == 'O' {
                                     self.open_selected_session_link();
+                                } else if c == 't' || c == 'T' {
+                                    return Ok(TimelineResult::Today);
                                 }
                             }
                             _ => {}
@@ -740,6 +751,8 @@ impl TimelineView {
             Paragraph::new(Line::from(vec![
                 Span::styled("[↑/↓]", Style::default().fg(Color::Yellow)),
                 Span::raw(" Select  "),
+                Span::styled("[T/H/L]", Style::default().fg(Color::Yellow)),
+                Span::raw(" Day  "),
                 Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
                 Span::raw(" Edit  "),
                 Span::styled("[O]", Style::default().fg(Color::Yellow)),
