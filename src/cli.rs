@@ -85,7 +85,10 @@ pub enum Commands {
         #[arg(long, help = "Start time (YYYY-MM-DD HH:MM or relative like '2h ago')")]
         start: Option<String>,
 
-        #[arg(long, help = "End time (YYYY-MM-DD HH:MM or relative like '1h ago')")]
+        #[arg(
+            long,
+            help = "End time (YYYY-MM-DD HH:MM or relative like '1h ago'). Omit for ongoing session"
+        )]
         end: Option<String>,
 
         #[arg(long, help = "Eisenhower Matrix quadrant (00, 01, 10, 11)")]

@@ -693,7 +693,7 @@ impl SessionService {
         &self,
         task_id: i64,
         start: DateTime<Utc>,
-        end: DateTime<Utc>,
+        end: Option<DateTime<Utc>>,
         link: Option<&str>,
     ) -> Result<Session> {
         let conn = self.db.connection();
@@ -707,7 +707,7 @@ impl SessionService {
             .map_err(|_| SessionServiceError::TaskNotFound(task_id))?;
 
         let start_str = format_sqlite_datetime(&start);
-        let end_str = format_sqlite_datetime(&end);
+        let end_str = end.map(|e| format_sqlite_datetime(&e));
 
         conn.execute(
             "INSERT INTO sessions (task_id, start_time, end_time, link, em_urgent, em_important) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -1253,7 +1253,7 @@ mod tests {
         let end = Utc::now() - chrono::Duration::hours(1);
 
         let session = session_service
-            .log_session(task.id, start, end, None)
+            .log_session(task.id, start, Some(end), None)
             .unwrap();
 
         assert_eq!(session.task_id, task.id);
@@ -1270,7 +1270,7 @@ mod tests {
         let end = Utc::now() - chrono::Duration::hours(1);
 
         session_service
-            .log_session(task.id, start, end, None)
+            .log_session(task.id, start, Some(end), None)
             .unwrap();
 
         let date = start.date_naive();
@@ -1291,7 +1291,7 @@ mod tests {
         let end = Utc::now() - chrono::Duration::hours(1);
 
         session_service
-            .log_session(task.id, start, end, None)
+            .log_session(task.id, start, Some(end), None)
             .unwrap();
 
         let date = start.date_naive();
@@ -1311,7 +1311,7 @@ mod tests {
         let end = Utc::now() - chrono::Duration::hours(1);
 
         session_service
-            .log_session(task.id, start, end, None)
+            .log_session(task.id, start, Some(end), None)
             .unwrap();
 
         let date = start.date_naive();
@@ -1333,7 +1333,7 @@ mod tests {
         let end = Utc::now() - chrono::Duration::hours(1);
 
         session_service
-            .log_session(task.id, start, end, None)
+            .log_session(task.id, start, Some(end), None)
             .unwrap();
 
         let date = start.date_naive();
@@ -1355,7 +1355,7 @@ mod tests {
         let end = Utc::now() - chrono::Duration::hours(1);
 
         session_service
-            .log_session(task.id, start, end, None)
+            .log_session(task.id, start, Some(end), None)
             .unwrap();
 
         let date = start.date_naive();
@@ -1466,13 +1466,13 @@ mod tests {
         let end = Utc::now() - chrono::Duration::hours(1);
 
         session_service
-            .log_session(task1.id, start, end, None)
+            .log_session(task1.id, start, Some(end), None)
             .unwrap();
 
         let start2 = Utc::now() - chrono::Duration::hours(4);
         let end2 = Utc::now() - chrono::Duration::hours(3);
         session_service
-            .log_session(task2.id, start2, end2, None)
+            .log_session(task2.id, start2, Some(end2), None)
             .unwrap();
 
         let date = start.date_naive();
@@ -1858,7 +1858,7 @@ mod tests {
         let existing_end = Utc.with_ymd_and_hms(2024, 1, 1, 10, 0, 0).unwrap();
 
         session_service
-            .log_session(task1.id, existing_start, existing_end, None)
+            .log_session(task1.id, existing_start, Some(existing_end), None)
             .unwrap();
 
         let new_start = Utc.with_ymd_and_hms(2024, 1, 1, 9, 30, 0).unwrap();
@@ -1899,7 +1899,7 @@ mod tests {
             .with_timezone(&Utc);
 
         session_service
-            .log_session(task.id, start_utc, end_utc, None)
+            .log_session(task.id, start_utc, Some(end_utc), None)
             .unwrap();
 
         let sessions = session_service.get_day(today).unwrap();
@@ -1934,7 +1934,7 @@ mod tests {
             .with_timezone(&Utc);
 
         session_service
-            .log_session(task.id, start_utc, end_utc, None)
+            .log_session(task.id, start_utc, Some(end_utc), None)
             .unwrap();
 
         let sessions = session_service.get_day(today).unwrap();
@@ -1969,7 +1969,7 @@ mod tests {
             .with_timezone(&Utc);
 
         session_service
-            .log_session(task.id, start_utc, end_utc, None)
+            .log_session(task.id, start_utc, Some(end_utc), None)
             .unwrap();
 
         let blocks = session_service.get_day_with_gaps(today).unwrap();
@@ -2015,7 +2015,7 @@ mod tests {
             .with_timezone(&Utc);
 
         session_service
-            .log_session(task.id, start_utc, end_utc, None)
+            .log_session(task.id, start_utc, Some(end_utc), None)
             .unwrap();
 
         let blocks = session_service.get_day_with_gaps(today).unwrap();
@@ -2061,7 +2061,7 @@ mod tests {
             .with_timezone(&Utc);
 
         session_service
-            .log_session(task.id, start_utc, end_utc, None)
+            .log_session(task.id, start_utc, Some(end_utc), None)
             .unwrap();
 
         let blocks_prev = session_service.get_day_with_gaps(day_minus_1).unwrap();
@@ -2128,7 +2128,7 @@ mod tests {
             .with_timezone(&Utc);
 
         session_service
-            .log_session(task1.id, overnight_start_utc, overnight_end_utc, None)
+            .log_session(task1.id, overnight_start_utc, Some(overnight_end_utc), None)
             .unwrap();
 
         let morning_start_local = today.and_hms_opt(10, 0, 0).unwrap();
@@ -2145,7 +2145,7 @@ mod tests {
             .with_timezone(&Utc);
 
         session_service
-            .log_session(task2.id, morning_start_utc, morning_end_utc, None)
+            .log_session(task2.id, morning_start_utc, Some(morning_end_utc), None)
             .unwrap();
 
         let blocks = session_service.get_day_with_gaps(today).unwrap();

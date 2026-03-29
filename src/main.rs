@@ -897,65 +897,67 @@ fn handle_log(
     };
 
     let end = if let Some(end_str) = end_arg {
-        parse_relative_time(end_str).map_err(|e| e.to_string())?
+        Some(parse_relative_time(end_str).map_err(|e| e.to_string())?)
     } else if is_interactive() && !no_prompt {
-        print!("End time (e.g., '1h ago', '15:00', or press Enter for now'): ");
+        print!("End time (e.g., '1h ago', '15:00', or press Enter for ongoing): ");
         use std::io::{self, Write};
         io::stdout().flush().unwrap();
         let mut input = String::new();
         io::stdin().read_line(&mut input).unwrap();
         let input = input.trim();
         if input.is_empty() {
-            now
+            None
         } else {
-            parse_relative_time(input).map_err(|e| e.to_string())?
+            Some(parse_relative_time(input).map_err(|e| e.to_string())?)
         }
     } else {
-        return Err("End time required in non-interactive mode".to_string());
+        None
     };
 
-    if end <= start {
-        return Err("End time must be after start time".to_string());
-    }
-
-    if end > now {
-        return Err("End time cannot be in the future".to_string());
-    }
-
-    let overlaps = session_service
-        .get_overlapping_sessions(start, end)
-        .map_err(|e| e.to_string())?;
-
-    if !overlaps.is_empty() && is_interactive() && !no_prompt {
-        println!("Warning: This session overlaps with:");
-        for overlap in &overlaps {
-            let end_display = overlap
-                .session
-                .end_time
-                .map(|e| e.format("%H:%M").to_string())
-                .unwrap_or_else(|| "now".to_string());
-            let bg_indicator = if overlap.session.is_background {
-                " [bg]"
-            } else {
-                ""
-            };
-            println!(
-                "  - {}{} ({} to {})",
-                overlap.task.name,
-                bg_indicator,
-                overlap.session.start_time.format("%H:%M"),
-                end_display
-            );
+    if let Some(end_time) = end {
+        if end_time <= start {
+            return Err("End time must be after start time".to_string());
         }
-        println!("Overlapping time will be split 50/50.");
-        print!("Continue? [Y/n] ");
-        use std::io::{self, Write};
-        io::stdout().flush().unwrap();
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).unwrap();
-        if input.trim().to_lowercase() == "n" {
-            println!("Cancelled.");
-            return Ok(());
+
+        if end_time > now {
+            return Err("End time cannot be in the future".to_string());
+        }
+
+        let overlaps = session_service
+            .get_overlapping_sessions(start, end_time)
+            .map_err(|e| e.to_string())?;
+
+        if !overlaps.is_empty() && is_interactive() && !no_prompt {
+            println!("Warning: This session overlaps with:");
+            for overlap in &overlaps {
+                let end_display = overlap
+                    .session
+                    .end_time
+                    .map(|e| e.format("%H:%M").to_string())
+                    .unwrap_or_else(|| "now".to_string());
+                let bg_indicator = if overlap.session.is_background {
+                    " [bg]"
+                } else {
+                    ""
+                };
+                println!(
+                    "  - {}{} ({} to {})",
+                    overlap.task.name,
+                    bg_indicator,
+                    overlap.session.start_time.format("%H:%M"),
+                    end_display
+                );
+            }
+            println!("Overlapping time will be split 50/50.");
+            print!("Continue? [Y/n] ");
+            use std::io::{self, Write};
+            io::stdout().flush().unwrap();
+            let mut input = String::new();
+            io::stdin().read_line(&mut input).unwrap();
+            if input.trim().to_lowercase() == "n" {
+                println!("Cancelled.");
+                return Ok(());
+            }
         }
     }
 
@@ -978,15 +980,20 @@ fn handle_log(
         .log_session(task.id, start, end, link_arg)
         .map_err(|e| e.to_string())?;
 
-    let duration = end - start;
-    let duration_str = format_duration(duration);
     let start_time = start.format("%H:%M");
-    let end_time = end.format("%H:%M");
-
-    println!(
-        "Logged: {} ({}) from {} to {}",
-        task.name, duration_str, start_time, end_time
-    );
+    if let Some(end_time) = end {
+        let duration = end_time - start;
+        let duration_str = format_duration(duration);
+        println!(
+            "Logged: {} ({}) from {} to {}",
+            task.name,
+            duration_str,
+            start_time,
+            end_time.format("%H:%M")
+        );
+    } else {
+        println!("Logged: {} from {} (ongoing)", task.name, start_time);
+    }
     println!("  Session ID: {}", session.id);
 
     Ok(())
