@@ -185,6 +185,18 @@ impl TaskService {
         Ok(())
     }
 
+    pub fn delete(&self, id: i64) -> Result<()> {
+        let conn = self.db.connection();
+
+        let rows_affected = conn.execute("DELETE FROM tasks WHERE id = ?1", params![id])?;
+
+        if rows_affected == 0 {
+            return Err(TaskServiceError::NotFound(id));
+        }
+
+        Ok(())
+    }
+
     pub fn extract_tags(name: &str) -> Vec<String> {
         name.split('/')
             .map(|s| s.trim().to_string())

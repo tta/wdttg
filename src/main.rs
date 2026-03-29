@@ -735,6 +735,11 @@ fn handle_edit(
 
                     println!("Updated: {}", final_task.name);
                 }
+                EditFormResult::Deleted(id) => {
+                    let task_name = task.name.clone();
+                    task_service.delete(id).map_err(|e| e.to_string())?;
+                    println!("Deleted: {}", task_name);
+                }
                 EditFormResult::Cancelled => {
                     println!("Cancelled.");
                 }
@@ -782,6 +787,11 @@ fn handle_edit(
                     .map_err(|e| e.to_string())?;
 
                 println!("Updated: {}", final_task.name);
+            }
+            EditFormResult::Deleted(id) => {
+                let task_name = task.name.clone();
+                task_service.delete(id).map_err(|e| e.to_string())?;
+                println!("Deleted: {}", task_name);
             }
             EditFormResult::Cancelled => {
                 println!("Cancelled.");

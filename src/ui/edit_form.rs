@@ -28,6 +28,7 @@ pub type Result<T> = std::result::Result<T, EditFormError>;
 #[derive(Debug, Clone, PartialEq)]
 pub enum EditFormResult {
     Saved(Task),
+    Deleted(i64),
     Cancelled,
 }
 
@@ -94,6 +95,7 @@ pub struct EditForm {
     em_index: usize,
     status_index: usize,
     pending_cancel: bool,
+    pending_delete: bool,
 }
 
 impl EditForm {
@@ -119,6 +121,7 @@ impl EditForm {
             em_index,
             status_index,
             pending_cancel: false,
+            pending_delete: false,
         }
     }
 
@@ -172,6 +175,16 @@ impl EditForm {
                         }
                         (_, KeyCode::Char('n') | KeyCode::Char('N')) | (_, KeyCode::Esc) => {
                             self.pending_cancel = false;
+                        }
+                        _ => {}
+                    }
+                } else if self.pending_delete {
+                    match (key.modifiers, key.code) {
+                        (_, KeyCode::Char('y') | KeyCode::Char('Y')) => {
+                            return Ok(EditFormResult::Deleted(self.task.id));
+                        }
+                        (_, KeyCode::Char('n') | KeyCode::Char('N')) | (_, KeyCode::Esc) => {
+                            self.pending_delete = false;
                         }
                         _ => {}
                     }
@@ -259,6 +272,9 @@ impl EditForm {
                                 created_at: chrono::Utc::now(),
                                 updated_at: chrono::Utc::now(),
                             }));
+                        }
+                        (_, KeyCode::Char('d')) => {
+                            self.pending_delete = true;
                         }
                         (_, KeyCode::Up) => {
                             self.move_field(-1);
@@ -392,6 +408,9 @@ impl EditForm {
         if self.pending_cancel {
             self.render_confirm_dialog(f);
         }
+        if self.pending_delete {
+            self.render_delete_dialog(f);
+        }
     }
 
     fn render_confirm_dialog(&self, f: &mut Frame) {
@@ -403,6 +422,29 @@ impl EditForm {
             Block::default()
                 .borders(Borders::ALL)
                 .title(" Confirm ")
+                .title_style(Style::default().fg(Color::Red))
+                .style(Style::default().bg(Color::Black)),
+        );
+
+        let area = ratatui::layout::Rect {
+            x: (f.size().width.saturating_sub(40)) / 2,
+            y: (f.size().height.saturating_sub(3)) / 2,
+            width: 40.min(f.size().width),
+            height: 3,
+        };
+
+        f.render_widget(dialog, area);
+    }
+
+    fn render_delete_dialog(&self, f: &mut Frame) {
+        let dialog = Paragraph::new(Line::from(vec![Span::styled(
+            "Delete this task? (y/n)",
+            Style::default().fg(Color::Red),
+        )]))
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title(" Delete Task ")
                 .title_style(Style::default().fg(Color::Red))
                 .style(Style::default().bg(Color::Black)),
         );
@@ -526,7 +568,7 @@ impl EditForm {
         let help_text = if self.editing_text {
             "Enter: confirm | Esc: cancel | ←→: move | Ctrl+W: delete word"
         } else {
-            "↑↓/j/k: navigate | Enter/Space: edit | ←: cycle | s: save | q/Esc: back"
+            "↑↓/j/k: navigate | Enter/Space: edit | ←: cycle | s: save | d: delete | q/Esc: back"
         };
 
         let help = Paragraph::new(Line::from(vec![Span::styled(
