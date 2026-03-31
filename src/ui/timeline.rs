@@ -435,12 +435,15 @@ impl TimelineView {
 
     fn render_title(&self, f: &mut Frame, area: Rect) {
         let title = match self.zoom {
-            ZoomLevel::All => format!("Timeline for {} (full day)", self.date.format("%Y-%m-%d"),),
+            ZoomLevel::All => format!(
+                "Timeline for {} (full day)",
+                self.date.format("%a %Y-%m-%d"),
+            ),
             ZoomLevel::Fit => {
                 let (s, e) = self.effective_time_range();
                 format!(
                     "Timeline for {} ({:02}:00-{:02}:00)",
-                    self.date.format("%Y-%m-%d"),
+                    self.date.format("%a %Y-%m-%d"),
                     s,
                     e,
                 )
