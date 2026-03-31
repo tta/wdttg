@@ -473,7 +473,23 @@ impl TimelineView {
         lines.push(Line::from(bar_spans));
 
         let markers = self.render_hour_markers(available_width);
-        lines.push(Line::styled(markers, Style::default().fg(Color::DarkGray)));
+        let arrow_pos = self.arrow_position(available_width);
+        if let Some(pos) = arrow_pos {
+            let chars: Vec<char> = markers.chars().collect();
+            if pos < chars.len() {
+                let before: String = chars[..pos].iter().collect();
+                let after: String = chars[pos + 1..].iter().collect();
+                lines.push(Line::from(vec![
+                    Span::styled(before, Style::default().fg(Color::DarkGray)),
+                    Span::styled("▲", Style::default().fg(Color::Yellow)),
+                    Span::styled(after, Style::default().fg(Color::DarkGray)),
+                ]));
+            } else {
+                lines.push(Line::styled(markers, Style::default().fg(Color::DarkGray)));
+            }
+        } else {
+            lines.push(Line::styled(markers, Style::default().fg(Color::DarkGray)));
+        }
 
         lines.push(Line::styled(
             separator.clone(),
@@ -553,6 +569,24 @@ impl TimelineView {
 
         let paragraph = Paragraph::new(lines).block(Block::default().borders(Borders::ALL));
         f.render_widget(paragraph, area);
+    }
+
+    fn arrow_position(&self, width: usize) -> Option<usize> {
+        let block_idx = if self.search_active {
+            self.get_selected_filtered_session().map(|(idx, _)| idx)
+        } else {
+            self.get_selected_session().map(|(idx, _)| idx)
+        }?;
+
+        let block = self.blocks.get(block_idx)?;
+        let (start_hour, end_hour) = self.effective_time_range();
+        let total_hours = (end_hour - start_hour) as f64;
+        let mins_per_char = (total_hours * 60.0) / width as f64;
+        let local_start = Local.from_utc_datetime(&block.start.naive_utc());
+        let start_mins = local_start.hour() as f64 * 60.0 + local_start.minute() as f64;
+        let zoom_start_mins = start_hour as f64 * 60.0;
+        let pos = ((start_mins - zoom_start_mins) / mins_per_char).round() as usize;
+        Some(pos.min(width.saturating_sub(1)))
     }
 
     fn render_24h_bar(&self, width: usize) -> Vec<Span<'static>> {
