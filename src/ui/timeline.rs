@@ -1,7 +1,7 @@
 use crate::clipboard::{open_link, OpenLinkResult};
 use crate::models::EmQuadrant;
 use crate::services::TimeBlock;
-use chrono::{Local, NaiveDate, TimeZone, Timelike};
+use chrono::{DateTime, Local, NaiveDate, TimeZone, Timelike, Utc};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
     execute,
@@ -856,20 +856,15 @@ impl TimelineView {
     }
 
     fn calculate_totals(&self) -> (i64, i64) {
-        let mut tracked: i64 = 0;
-        let mut untracked: i64 = 0;
+        let intervals: Vec<(DateTime<Utc>, DateTime<Utc>)> = self
+            .blocks
+            .iter()
+            .filter(|b| !b.is_gap())
+            .filter_map(|b| b.end.map(|e| (b.start, e)))
+            .collect();
 
-        for block in &self.blocks {
-            if let Some(seconds) = block.duration_seconds() {
-                if block.is_gap() {
-                    untracked += seconds;
-                } else {
-                    tracked += seconds;
-                }
-            }
-        }
-
-        (tracked, untracked)
+        let tracked = merge_and_sum_intervals(&intervals);
+        (tracked, untracked_from_blocks(&self.blocks, tracked))
     }
 }
 
@@ -1070,20 +1065,45 @@ fn print_hour_markers_static(width: usize) {
 }
 
 fn calculate_totals_static(blocks: &[TimeBlock]) -> (i64, i64) {
-    let mut tracked: i64 = 0;
-    let mut untracked: i64 = 0;
+    let intervals: Vec<(DateTime<Utc>, DateTime<Utc>)> = blocks
+        .iter()
+        .filter(|b| !b.is_gap())
+        .filter_map(|b| b.end.map(|e| (b.start, e)))
+        .collect();
 
-    for block in blocks {
-        if let Some(seconds) = block.duration_seconds() {
-            if block.is_gap() {
-                untracked += seconds;
-            } else {
-                tracked += seconds;
-            }
-        }
+    let tracked = merge_and_sum_intervals(&intervals);
+    (tracked, untracked_from_blocks(blocks, tracked))
+}
+
+fn merge_and_sum_intervals(intervals: &[(DateTime<Utc>, DateTime<Utc>)]) -> i64 {
+    if intervals.is_empty() {
+        return 0;
     }
 
-    (tracked, untracked)
+    let mut sorted: Vec<_> = intervals.to_vec();
+    sorted.sort_by_key(|(s, _)| *s);
+
+    let mut total: i64 = 0;
+    let mut merged_start = sorted[0].0;
+    let mut merged_end = sorted[0].1;
+
+    for (start, end) in sorted.iter().skip(1) {
+        if *start < merged_end {
+            merged_end = merged_end.max(*end);
+        } else {
+            total += (merged_end - merged_start).num_seconds();
+            merged_start = *start;
+            merged_end = *end;
+        }
+    }
+    total += (merged_end - merged_start).num_seconds();
+
+    total
+}
+
+fn untracked_from_blocks(blocks: &[TimeBlock], tracked: i64) -> i64 {
+    let total_span: i64 = blocks.iter().filter_map(|b| b.duration_seconds()).sum();
+    total_span - tracked
 }
 
 #[cfg(test)]
