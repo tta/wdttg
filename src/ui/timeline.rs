@@ -397,10 +397,10 @@ impl TimelineView {
                         }
                     };
 
-                    if earliest_hour.map_or(true, |e| start_hour < e) {
+                    if earliest_hour.is_none_or(|e| start_hour < e) {
                         earliest_hour = Some(start_hour);
                     }
-                    if latest_hour.map_or(true, |l| end_hour > l) {
+                    if latest_hour.is_none_or(|l| end_hour > l) {
                         latest_hour = Some(end_hour);
                     }
                 }
