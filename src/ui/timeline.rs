@@ -1099,9 +1099,12 @@ fn merge_and_sum_intervals(intervals: &[(DateTime<Utc>, DateTime<Utc>)]) -> i64 
     total
 }
 
-fn untracked_from_blocks(blocks: &[TimeBlock], tracked: i64) -> i64 {
-    let total_span: i64 = blocks.iter().filter_map(|b| b.duration_seconds()).sum();
-    total_span - tracked
+fn untracked_from_blocks(blocks: &[TimeBlock], _tracked: i64) -> i64 {
+    blocks
+        .iter()
+        .filter(|b| b.is_gap())
+        .filter_map(|b| b.duration_seconds())
+        .sum()
 }
 
 #[cfg(test)]

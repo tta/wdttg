@@ -610,7 +610,7 @@ impl SessionService {
                 is_background: swt.session.is_background,
             });
 
-            last_end = Some(clamped_end);
+            last_end = Some(last_end.unwrap_or(clamped_start).max(clamped_end));
         }
 
         if let Some(prev_end) = last_end {
