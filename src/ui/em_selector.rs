@@ -106,10 +106,12 @@ impl EmSelector {
                     (_, KeyCode::Esc) => {
                         return Ok(EmSelectorResult::Cancelled);
                     }
-                    (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
+                    (KeyModifiers::CONTROL, KeyCode::Char('j'))
+                    | (KeyModifiers::NONE, KeyCode::Char('j')) => {
                         self.move_selection(1);
                     }
-                    (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
+                    (KeyModifiers::CONTROL, KeyCode::Char('k'))
+                    | (KeyModifiers::NONE, KeyCode::Char('k')) => {
                         self.move_selection(-1);
                     }
                     (_, KeyCode::Enter) => {
@@ -164,12 +166,33 @@ impl EmSelector {
     fn render(&self, f: &mut Frame) {
         let chunks = Layout::default()
             .direction(Direction::Vertical)
-            .margin(2)
-            .constraints([Constraint::Length(3), Constraint::Min(1)])
+            .margin(1)
+            .constraints([
+                Constraint::Length(3),
+                Constraint::Min(1),
+                Constraint::Length(3),
+            ])
             .split(f.size());
 
         self.render_title(f, chunks[0]);
         self.render_list(f, chunks[1]);
+        self.render_footer(f, chunks[2]);
+    }
+
+    fn render_footer(&self, f: &mut Frame, area: Rect) {
+        let paragraph = Paragraph::new(Line::from(vec![
+            Span::styled("[1-4]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Select  "),
+            Span::styled("[j/k/↑/↓]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Navigate  "),
+            Span::styled("[Enter]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Confirm  "),
+            Span::styled("[Esc]", Style::default().fg(Color::Yellow)),
+            Span::raw(" Cancel"),
+        ]))
+        .block(Block::default().borders(Borders::ALL));
+
+        f.render_widget(paragraph, area);
     }
 
     fn render_title(&self, f: &mut Frame, area: Rect) {
@@ -215,7 +238,7 @@ impl EmSelector {
             .block(
                 Block::default()
                     .borders(Borders::ALL)
-                    .title(" Options (1-4, arrows, or Ctrl+J/K) ")
+                    .title(" Options ")
                     .title_style(Style::default().fg(Color::Cyan)),
             )
             .highlight_style(
