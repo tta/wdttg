@@ -90,6 +90,13 @@ impl EmSelector {
         result
     }
 
+    pub fn run_on_terminal(
+        self,
+        terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+    ) -> Result<EmSelectorResult> {
+        self.run_loop(terminal)
+    }
+
     fn run_loop(
         mut self,
         terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
@@ -256,8 +263,23 @@ pub fn select_em_quadrant() -> Result<EmSelectorResult> {
     EmSelector::new().run()
 }
 
+pub fn select_em_quadrant_on_terminal(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+) -> Result<EmSelectorResult> {
+    EmSelector::new().run_on_terminal(terminal)
+}
+
 pub fn select_em_quadrant_or_default() -> Option<EmQuadrant> {
     match select_em_quadrant() {
+        Ok(EmSelectorResult::Selected(quadrant)) => Some(quadrant),
+        _ => None,
+    }
+}
+
+pub fn select_em_quadrant_on_terminal_or_default(
+    terminal: &mut Terminal<CrosstermBackend<io::Stdout>>,
+) -> Option<EmQuadrant> {
+    match select_em_quadrant_on_terminal(terminal) {
         Ok(EmSelectorResult::Selected(quadrant)) => Some(quadrant),
         _ => None,
     }

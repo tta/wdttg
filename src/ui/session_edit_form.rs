@@ -269,7 +269,7 @@ impl SessionEditForm {
                             self.move_field(1);
                         }
                         (_, KeyCode::Enter) | (_, KeyCode::Char(' ')) | (_, KeyCode::Right) => {
-                            self.edit_current_field();
+                            self.edit_current_field(terminal);
                         }
                         (_, KeyCode::Char('s')) => {
                             if let Some(result) = self.validate_and_save() {
@@ -306,10 +306,12 @@ impl SessionEditForm {
         self.current_field = FIELDS[new_idx];
     }
 
-    fn edit_current_field(&mut self) {
+    fn edit_current_field(&mut self, terminal: &mut Terminal<CrosstermBackend<io::Stdout>>) {
         match self.current_field {
             Field::EmQuadrant => {
-                if let Some(quadrant) = super::em_selector::select_em_quadrant_or_default() {
+                if let Some(quadrant) =
+                    super::em_selector::select_em_quadrant_on_terminal_or_default(terminal)
+                {
                     self.session.em_quadrant = quadrant;
                 }
             }
