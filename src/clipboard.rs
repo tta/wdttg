@@ -31,23 +31,9 @@ pub fn copy_to_clipboard(text: &str) -> Result<(), String> {
     Ok(())
 }
 
-pub fn resolve_link_path(link: &str) -> Option<String> {
-    let vault = std::env::var("WDTTG_VAULT").ok()?;
-
-    let link = link.trim_start_matches("[[").trim_end_matches("]]");
-    let file = link.split('#').next()?;
-
-    let file = if file.ends_with(".md") {
-        file.to_string()
-    } else {
-        format!("{}.md", file)
-    };
-
-    Some(format!("{}/{}", vault, file))
-}
-
 pub enum OpenLinkResult {
     OpenedUrl,
+    OpenInEditor { link: String },
     CopiedPath(String),
     CopiedRaw(String),
 }
@@ -59,12 +45,36 @@ pub fn open_link(link: &str) -> Result<OpenLinkResult, String> {
         open_url(link)?;
         Ok(OpenLinkResult::OpenedUrl)
     } else if link.starts_with("[[") && link.ends_with("]]") {
-        let path = resolve_link_path(link).ok_or("WDTTG_VAULT not set")?;
-        copy_to_clipboard(&path)?;
-        Ok(OpenLinkResult::CopiedPath(path))
+        Ok(OpenLinkResult::OpenInEditor {
+            link: link.to_string(),
+        })
     } else {
         copy_to_clipboard(link)?;
         Ok(OpenLinkResult::CopiedRaw(link.to_string()))
+    }
+}
+
+pub fn open_in_nvim(link: &str) -> Result<(), String> {
+    let mut cmd = Command::new("nvim");
+    cmd.args([
+        "-c",
+        "lua require('lazy').load({plugins='obsidian.nvim'})",
+        "-c",
+        &format!("put ='{}'", link),
+        "-c",
+        "ObsidianFollowLink",
+        "-c",
+        "bdelete! 1",
+    ]);
+
+    let result = cmd
+        .status()
+        .map_err(|e| format!("Failed to open editor: {}", e))?;
+
+    if result.success() {
+        Ok(())
+    } else {
+        Err(format!("Editor exited with: {}", result))
     }
 }
 
@@ -90,48 +100,3 @@ fn open_url(url: &str) -> Result<(), String> {
     Ok(())
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use std::sync::Mutex;
-
-    static VAULT_LOCK: Mutex<()> = Mutex::new(());
-
-    #[test]
-    fn test_resolve_link_path_simple() {
-        let _lock = VAULT_LOCK.lock().unwrap();
-        std::env::set_var("WDTTG_VAULT", "/test/vault");
-        let result = resolve_link_path("[[daily/2026-03-24]]");
-        assert_eq!(result, Some("/test/vault/daily/2026-03-24.md".to_string()));
-        std::env::remove_var("WDTTG_VAULT");
-    }
-
-    #[test]
-    fn test_resolve_link_path_with_section() {
-        let _lock = VAULT_LOCK.lock().unwrap();
-        std::env::set_var("WDTTG_VAULT", "/test/vault");
-        let result = resolve_link_path("[[projects/feature-x#Implementation]]");
-        assert_eq!(
-            result,
-            Some("/test/vault/projects/feature-x.md".to_string())
-        );
-        std::env::remove_var("WDTTG_VAULT");
-    }
-
-    #[test]
-    fn test_resolve_link_path_with_md_extension() {
-        let _lock = VAULT_LOCK.lock().unwrap();
-        std::env::set_var("WDTTG_VAULT", "/test/vault");
-        let result = resolve_link_path("[[notes/meeting.md]]");
-        assert_eq!(result, Some("/test/vault/notes/meeting.md".to_string()));
-        std::env::remove_var("WDTTG_VAULT");
-    }
-
-    #[test]
-    fn test_resolve_link_path_no_vault() {
-        let _lock = VAULT_LOCK.lock().unwrap();
-        std::env::remove_var("WDTTG_VAULT");
-        let result = resolve_link_path("[[daily/2026-03-24]]");
-        assert_eq!(result, None);
-    }
-}

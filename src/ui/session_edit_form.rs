@@ -1,4 +1,4 @@
-use crate::clipboard::{open_link, OpenLinkResult};
+use crate::clipboard::{open_link, open_in_nvim, OpenLinkResult};
 use crate::models::{EmQuadrant, Session};
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
 use crossterm::{
@@ -30,6 +30,7 @@ pub enum SessionEditError {
 }
 
 pub type Result<T> = std::result::Result<T, SessionEditError>;
+
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum SessionEditResult {
@@ -277,7 +278,15 @@ impl SessionEditForm {
                             }
                         }
                         (_, KeyCode::Char('o')) => {
-                            self.open_current_link();
+                            if let Some(link) = self.open_current_link() {
+                                super::suspend_tui(terminal).map_err(|e| SessionEditError::Terminal(e.to_string()))?;
+                                let result = open_in_nvim(&link);
+                                super::resume_tui(terminal).map_err(|e| SessionEditError::Terminal(e.to_string()))?;
+                                self.error_message = Some(match result {
+                                    Ok(()) => format!("Opened: {}", link),
+                                    Err(e) => format!("Error: {}", e),
+                                });
+                            }
                         }
                         (_, KeyCode::Char('1' | '2' | '3' | '4')) => {
                             if self.current_field == Field::EmQuadrant {
@@ -433,15 +442,18 @@ impl SessionEditForm {
         })
     }
 
-    fn open_current_link(&mut self) {
+    fn open_current_link(&mut self) -> Option<String> {
         if self.session.link.is_empty() {
             self.error_message = Some("No link to open".to_string());
-            return;
+            return None;
         }
 
         match open_link(&self.session.link) {
             Ok(OpenLinkResult::OpenedUrl) => {
                 self.error_message = Some("Opened in browser".to_string());
+            }
+            Ok(OpenLinkResult::OpenInEditor { link }) => {
+                return Some(link);
             }
             Ok(OpenLinkResult::CopiedPath(path)) => {
                 self.error_message = Some(format!("Copied: {}", path));
@@ -453,6 +465,7 @@ impl SessionEditForm {
                 self.error_message = Some(e);
             }
         }
+        None
     }
 
     fn render(&self, f: &mut Frame) {

@@ -1,4 +1,4 @@
-use crate::clipboard::{open_link, OpenLinkResult};
+use crate::clipboard::{open_link, open_in_nvim, OpenLinkResult};
 use crate::models::EmQuadrant;
 use crate::services::TimeBlock;
 use chrono::{DateTime, Local, NaiveDate, TimeZone, Timelike, Utc};
@@ -31,6 +31,7 @@ pub enum TimelineError {
 }
 
 pub type Result<T> = std::result::Result<T, TimelineError>;
+
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum TimelineResult {
@@ -178,7 +179,17 @@ impl TimelineView {
                                 self.apply_search_filter();
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
-                                self.open_selected_filtered_session_link();
+                                if let Some(link) =
+                                    self.open_selected_filtered_session_link()
+                                {
+                                    super::suspend_tui(terminal).map_err(|e| TimelineError::Terminal(e.to_string()))?;
+                                    let result = open_in_nvim(&link);
+                                    super::resume_tui(terminal).map_err(|e| TimelineError::Terminal(e.to_string()))?;
+                                    self.status_message = Some(match result {
+                                        Ok(()) => format!("Opened: {}", link),
+                                        Err(e) => format!("Error: {}", e),
+                                    });
+                                }
                             }
                             (_, KeyCode::Char(c)) => {
                                 self.search_query.push(c);
@@ -219,7 +230,17 @@ impl TimelineView {
                                 if let Some(zoom) = ZoomLevel::from_key(c) {
                                     self.zoom = zoom;
                                 } else if c == 'o' || c == 'O' {
-                                    self.open_selected_session_link();
+                                    if let Some(link) =
+                                        self.open_selected_session_link()
+                                    {
+                                        super::suspend_tui(terminal).map_err(|e| TimelineError::Terminal(e.to_string()))?;
+                                        let result = open_in_nvim(&link);
+                                        super::resume_tui(terminal).map_err(|e| TimelineError::Terminal(e.to_string()))?;
+                                        self.status_message = Some(match result {
+                                            Ok(()) => format!("Opened: {}", link),
+                                            Err(e) => format!("Error: {}", e),
+                                        });
+                                    }
                                 } else if c == 't' || c == 'T' {
                                     return Ok(TimelineResult::Today);
                                 }
@@ -313,7 +334,8 @@ impl TimelineView {
         }
     }
 
-    fn open_selected_session_link(&mut self) {
+    /// Returns Some(link) if the link is a wiki-link to open in nvim.
+    fn open_selected_session_link(&mut self) -> Option<String> {
         if let Some((block_idx, _)) = self.get_selected_session() {
             if let Some(block) = self.blocks.get(block_idx) {
                 if let Some(link) = &block.link {
@@ -321,6 +343,9 @@ impl TimelineView {
                         Ok(OpenLinkResult::OpenedUrl) => {
                             self.status_message = Some("Opened in browser".to_string());
                         }
+                        Ok(OpenLinkResult::OpenInEditor { link }) => {
+                            return Some(link);
+                        }
                         Ok(OpenLinkResult::CopiedPath(path)) => {
                             self.status_message = Some(format!("Copied: {}", path));
                         }
@@ -336,9 +361,11 @@ impl TimelineView {
                 }
             }
         }
+        None
     }
 
-    fn open_selected_filtered_session_link(&mut self) {
+    /// Returns Some(link) if the link is a wiki-link to open in nvim.
+    fn open_selected_filtered_session_link(&mut self) -> Option<String> {
         if let Some((block_idx, _)) = self.get_selected_filtered_session() {
             if let Some(block) = self.blocks.get(block_idx) {
                 if let Some(link) = &block.link {
@@ -346,6 +373,9 @@ impl TimelineView {
                         Ok(OpenLinkResult::OpenedUrl) => {
                             self.status_message = Some("Opened in browser".to_string());
                         }
+                        Ok(OpenLinkResult::OpenInEditor { link }) => {
+                            return Some(link);
+                        }
                         Ok(OpenLinkResult::CopiedPath(path)) => {
                             self.status_message = Some(format!("Copied: {}", path));
                         }
@@ -361,6 +391,7 @@ impl TimelineView {
                 }
             }
         }
+        None
     }
 
     fn effective_time_range(&self) -> (u32, u32) {

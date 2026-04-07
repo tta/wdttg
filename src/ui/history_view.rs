@@ -1,4 +1,4 @@
-use crate::clipboard::{open_link, OpenLinkResult};
+use crate::clipboard::{open_link, open_in_nvim, OpenLinkResult};
 use crate::models::SessionWithTask;
 use crate::ui::quadrant_color;
 use chrono::{Local, NaiveDate, TimeZone};
@@ -31,6 +31,7 @@ pub enum HistoryViewError {
 }
 
 pub type Result<T> = std::result::Result<T, HistoryViewError>;
+
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HistoryViewResult {
@@ -197,7 +198,17 @@ impl HistoryView {
                                 self.apply_search_filter();
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
-                                self.open_selected_filtered_session_link();
+                                if let Some(link) =
+                                    self.open_selected_filtered_session_link()
+                                {
+                                    super::suspend_tui(terminal).map_err(|e| HistoryViewError::Terminal(e.to_string()))?;
+                                    let result = open_in_nvim(&link);
+                                    super::resume_tui(terminal).map_err(|e| HistoryViewError::Terminal(e.to_string()))?;
+                                    self.status_message = Some(match result {
+                                        Ok(()) => format!("Opened: {}", link),
+                                        Err(e) => format!("Error: {}", e),
+                                    });
+                                }
                             }
                             (_, KeyCode::Char(c)) => {
                                 self.search_query.push(c);
@@ -233,7 +244,17 @@ impl HistoryView {
                                     self.period = new_period;
                                     return Ok(HistoryViewResult::PeriodChanged(new_period));
                                 } else if c == 'o' || c == 'O' {
-                                    self.open_selected_session_link();
+                                    if let Some(link) =
+                                        self.open_selected_session_link()
+                                    {
+                                        super::suspend_tui(terminal).map_err(|e| HistoryViewError::Terminal(e.to_string()))?;
+                                        let result = open_in_nvim(&link);
+                                        super::resume_tui(terminal).map_err(|e| HistoryViewError::Terminal(e.to_string()))?;
+                                        self.status_message = Some(match result {
+                                            Ok(()) => format!("Opened: {}", link),
+                                            Err(e) => format!("Error: {}", e),
+                                        });
+                                    }
                                 }
                             }
                             _ => {}
@@ -312,12 +333,15 @@ impl HistoryView {
         }
     }
 
-    fn open_selected_session_link(&mut self) {
+    fn open_selected_session_link(&mut self) -> Option<String> {
         if let Some(session) = self.sessions.get(self.selected_session_idx) {
             if let Some(link) = &session.session.link {
                 match open_link(link) {
                     Ok(OpenLinkResult::OpenedUrl) => {
                         self.status_message = Some("Opened in browser".to_string());
+                    }
+                    Ok(OpenLinkResult::OpenInEditor { link }) => {
+                        return Some(link);
                     }
                     Ok(OpenLinkResult::CopiedPath(path)) => {
                         self.status_message = Some(format!("Copied: {}", path));
@@ -333,15 +357,19 @@ impl HistoryView {
                 self.status_message = Some("No link for this session".to_string());
             }
         }
+        None
     }
 
-    fn open_selected_filtered_session_link(&mut self) {
+    fn open_selected_filtered_session_link(&mut self) -> Option<String> {
         if let Some(&idx) = self.filtered_indices.get(self.filtered_selected_idx) {
             if let Some(session) = self.sessions.get(idx) {
                 if let Some(link) = &session.session.link {
                     match open_link(link) {
                         Ok(OpenLinkResult::OpenedUrl) => {
                             self.status_message = Some("Opened in browser".to_string());
+                        }
+                        Ok(OpenLinkResult::OpenInEditor { link }) => {
+                            return Some(link);
                         }
                         Ok(OpenLinkResult::CopiedPath(path)) => {
                             self.status_message = Some(format!("Copied: {}", path));
@@ -358,6 +386,7 @@ impl HistoryView {
                 }
             }
         }
+        None
     }
 
     fn group_by_date(&self) -> BTreeMap<NaiveDate, Vec<&SessionWithTask>> {
