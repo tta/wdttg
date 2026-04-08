@@ -169,10 +169,10 @@ impl TagPicker {
                             (KeyModifiers::CONTROL, KeyCode::Char('c')) | (_, KeyCode::Esc) => {
                                 self.cancel_search();
                             }
-                            (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
+                            (KeyModifiers::CONTROL, KeyCode::Char('n')) => {
                                 self.move_down_filtered();
                             }
-                            (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
+                            (KeyModifiers::CONTROL, KeyCode::Char('p')) => {
                                 self.move_up_filtered();
                             }
                             (_, KeyCode::Enter) => {

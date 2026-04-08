@@ -1,4 +1,4 @@
-use crate::clipboard::{open_link, open_in_nvim, OpenLinkResult};
+use crate::clipboard::{open_in_nvim, open_link, OpenLinkResult};
 use crate::models::SessionWithTask;
 use crate::ui::quadrant_color;
 use chrono::{Local, NaiveDate, TimeZone};
@@ -31,7 +31,6 @@ pub enum HistoryViewError {
 }
 
 pub type Result<T> = std::result::Result<T, HistoryViewError>;
-
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum HistoryViewResult {
@@ -172,10 +171,10 @@ impl HistoryView {
                             (KeyModifiers::CONTROL, KeyCode::Char('c')) | (_, KeyCode::Esc) => {
                                 self.cancel_search();
                             }
-                            (KeyModifiers::CONTROL, KeyCode::Char('j')) => {
+                            (KeyModifiers::CONTROL, KeyCode::Char('n')) => {
                                 self.select_next_filtered_session();
                             }
-                            (KeyModifiers::CONTROL, KeyCode::Char('k')) => {
+                            (KeyModifiers::CONTROL, KeyCode::Char('p')) => {
                                 self.select_prev_filtered_session();
                             }
                             (_, KeyCode::Enter) => {
@@ -198,12 +197,12 @@ impl HistoryView {
                                 self.apply_search_filter();
                             }
                             (KeyModifiers::CONTROL, KeyCode::Char('o')) => {
-                                if let Some(link) =
-                                    self.open_selected_filtered_session_link()
-                                {
-                                    super::suspend_tui(terminal).map_err(|e| HistoryViewError::Terminal(e.to_string()))?;
+                                if let Some(link) = self.open_selected_filtered_session_link() {
+                                    super::suspend_tui(terminal)
+                                        .map_err(|e| HistoryViewError::Terminal(e.to_string()))?;
                                     let result = open_in_nvim(&link);
-                                    super::resume_tui(terminal).map_err(|e| HistoryViewError::Terminal(e.to_string()))?;
+                                    super::resume_tui(terminal)
+                                        .map_err(|e| HistoryViewError::Terminal(e.to_string()))?;
                                     self.status_message = Some(match result {
                                         Ok(()) => format!("Opened: {}", link),
                                         Err(e) => format!("Error: {}", e),
@@ -244,12 +243,14 @@ impl HistoryView {
                                     self.period = new_period;
                                     return Ok(HistoryViewResult::PeriodChanged(new_period));
                                 } else if c == 'o' || c == 'O' {
-                                    if let Some(link) =
-                                        self.open_selected_session_link()
-                                    {
-                                        super::suspend_tui(terminal).map_err(|e| HistoryViewError::Terminal(e.to_string()))?;
+                                    if let Some(link) = self.open_selected_session_link() {
+                                        super::suspend_tui(terminal).map_err(|e| {
+                                            HistoryViewError::Terminal(e.to_string())
+                                        })?;
                                         let result = open_in_nvim(&link);
-                                        super::resume_tui(terminal).map_err(|e| HistoryViewError::Terminal(e.to_string()))?;
+                                        super::resume_tui(terminal).map_err(|e| {
+                                            HistoryViewError::Terminal(e.to_string())
+                                        })?;
                                         self.status_message = Some(match result {
                                             Ok(()) => format!("Opened: {}", link),
                                             Err(e) => format!("Error: {}", e),

@@ -23,8 +23,8 @@ Therefore:
 
 | View | Normal Mode | Search Mode |
 |------|-------------|-------------|
-| Timeline | `j`/`k` for navigation | `Ctrl+j`/`Ctrl+k` for navigation |
-| History | `j`/`k` for navigation | `Ctrl+j`/`Ctrl+k` for navigation |
+| Timeline | `j`/`k` for navigation | `Ctrl+n`/`Ctrl+p` for navigation |
+| History | `j`/`k` for navigation | `Ctrl+n`/`Ctrl+p` for navigation |
 | TagPicker | `j`/`k` for navigation | N/A |
 | Picker | `j`/`k` for navigation | N/A |
 

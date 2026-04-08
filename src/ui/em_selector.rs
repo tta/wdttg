@@ -113,11 +113,11 @@ impl EmSelector {
                     (_, KeyCode::Esc) => {
                         return Ok(EmSelectorResult::Cancelled);
                     }
-                    (KeyModifiers::CONTROL, KeyCode::Char('j'))
+                    (KeyModifiers::CONTROL, KeyCode::Char('n'))
                     | (KeyModifiers::NONE, KeyCode::Char('j')) => {
                         self.move_selection(1);
                     }
-                    (KeyModifiers::CONTROL, KeyCode::Char('k'))
+                    (KeyModifiers::CONTROL, KeyCode::Char('p'))
                     | (KeyModifiers::NONE, KeyCode::Char('k')) => {
                         self.move_selection(-1);
                     }
