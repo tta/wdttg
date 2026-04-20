@@ -824,14 +824,16 @@ impl SessionService {
         &self,
         start: NaiveDate,
         end: NaiveDate,
-    ) -> Result<Vec<crate::models::TagTime>> {
+    ) -> Result<(Vec<crate::models::TagTime>, i64)> {
         use std::collections::HashMap;
 
         let split_times = self.get_split_times(start, end)?;
 
         if split_times.is_empty() {
-            return Ok(vec![]);
+            return Ok((vec![], 0));
         }
+
+        let actual_total: i64 = split_times.iter().map(|st| st.split_seconds).sum();
 
         let conn = self.db.connection();
         let mut task_tags: HashMap<i64, Vec<String>> = HashMap::new();
@@ -866,7 +868,7 @@ impl SessionService {
             .collect();
 
         results.sort_by(|a, b| b.total_seconds.cmp(&a.total_seconds));
-        Ok(results)
+        Ok((results, actual_total))
     }
 
     pub fn get_tags_with_time(
@@ -1338,12 +1340,13 @@ mod tests {
             .unwrap();
 
         let date = start.date_naive();
-        let tag_times = session_service.get_tag_time(date, date).unwrap();
+        let (tag_times, actual_total) = session_service.get_tag_time(date, date).unwrap();
 
         assert!(!tag_times.is_empty());
         let tag_names: Vec<&str> = tag_times.iter().map(|t| t.tag.as_str()).collect();
         assert!(tag_names.contains(&"coding"));
         assert!(tag_names.contains(&"feature"));
+        assert_eq!(actual_total, 3600);
     }
 
     #[test]
@@ -1397,9 +1400,10 @@ mod tests {
         drop(conn);
 
         let date = base.date_naive();
-        let tag_times = session_service.get_tag_time(date, date).unwrap();
+        let (tag_times, actual_total) = session_service.get_tag_time(date, date).unwrap();
 
         assert!(!tag_times.is_empty());
+        assert_eq!(actual_total, 10800);
 
         let coding_tag = tag_times.iter().find(|t| t.tag == "coding");
         assert!(coding_tag.is_some());

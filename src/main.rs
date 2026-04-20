@@ -1123,7 +1123,7 @@ fn handle_report_tag(period: &str, db: &Arc<Database>) -> Result<(), String> {
     let session_service = SessionService::new(Arc::clone(db));
     let (start, end) = parse_period(period).map_err(|e| e.to_string())?;
 
-    let tag_times = session_service
+    let (tag_times, actual_total) = session_service
         .get_tag_time(start, end)
         .map_err(|e| e.to_string())?;
 
@@ -1132,14 +1132,12 @@ fn handle_report_tag(period: &str, db: &Arc<Database>) -> Result<(), String> {
         return Ok(());
     }
 
-    let total_seconds: i64 = tag_times.iter().map(|tt| tt.total_seconds).sum();
-
     println!("Time by Tag ({} to {})", start, end);
     println!("{}", "=".repeat(50));
 
     for tt in &tag_times {
-        let percentage = if total_seconds > 0 {
-            (tt.total_seconds as f64 / total_seconds as f64) * 100.0
+        let percentage = if actual_total > 0 {
+            (tt.total_seconds as f64 / actual_total as f64) * 100.0
         } else {
             0.0
         };
@@ -1161,7 +1159,7 @@ fn handle_report_tag(period: &str, db: &Arc<Database>) -> Result<(), String> {
     println!("{}", "-".repeat(50));
     println!(
         "Total: {} across {} tag{}",
-        format_duration(chrono::Duration::seconds(total_seconds)),
+        format_duration(chrono::Duration::seconds(actual_total)),
         tag_times.len(),
         if tag_times.len() == 1 { "" } else { "s" }
     );
