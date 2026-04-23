@@ -1,5 +1,6 @@
 use crate::clipboard::{open_link, open_in_nvim, OpenLinkResult};
 use crate::models::{EmQuadrant, Session};
+use crate::time_parser::parse_relative_time;
 use chrono::{DateTime, Local, NaiveDateTime, TimeZone, Utc};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyModifiers},
@@ -678,7 +679,7 @@ impl SessionEditForm {
 
     fn render_help(&self, f: &mut Frame, area: Rect) {
         let help_text = if self.editing_text {
-            "Enter: confirm | Esc: cancel | ←→: move | Ctrl+W: delete word"
+            "Enter: confirm | Esc: cancel | ←→: move | Ctrl+W: delete word | e.g. '30m ago', 'now'"
         } else {
             "↑↓/j/k: navigate | Enter/Space: edit | s: save | d: delete | o: open link | q/Esc: back"
         };
@@ -695,6 +696,10 @@ impl SessionEditForm {
 
 fn parse_datetime_input(input: &str) -> std::result::Result<DateTime<Utc>, String> {
     let input = input.trim();
+
+    if let Ok(dt) = parse_relative_time(input) {
+        return Ok(dt);
+    }
 
     let formats = [
         "%Y-%m-%d %H:%M",
@@ -721,7 +726,7 @@ fn parse_datetime_input(input: &str) -> std::result::Result<DateTime<Utc>, Strin
         return Ok(dt.with_timezone(&Utc));
     }
 
-    Err("Invalid format. Use: YYYY-MM-DD HH:MM or M/D HH:MM".to_string())
+    Err("Invalid format. Use: YYYY-MM-DD HH:MM, '30m ago', 'now', etc.".to_string())
 }
 
 pub fn edit_session(session: Session, task_name: String) -> Result<SessionEditResult> {
