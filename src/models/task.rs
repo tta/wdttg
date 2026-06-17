@@ -88,6 +88,24 @@ impl EmQuadrant {
             EmQuadrant::Eliminate => "Not Urgent + Not Important (Eliminate)",
         }
     }
+
+    pub fn all() -> &'static [EmQuadrant] {
+        &[
+            EmQuadrant::DoFirst,
+            EmQuadrant::Schedule,
+            EmQuadrant::Delegate,
+            EmQuadrant::Eliminate,
+        ]
+    }
+
+    pub fn flags(&self) -> (bool, bool) {
+        match self {
+            EmQuadrant::DoFirst => (true, true),
+            EmQuadrant::Schedule => (false, true),
+            EmQuadrant::Delegate => (true, false),
+            EmQuadrant::Eliminate => (false, false),
+        }
+    }
 }
 
 impl fmt::Display for EmQuadrant {

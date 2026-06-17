@@ -1,6 +1,7 @@
 use crate::db::Database;
 use crate::models::{Session, SessionWithTask, Task, TaskStatus};
-use chrono::{DateTime, Local, NaiveDate, NaiveDateTime, TimeZone, Utc};
+use crate::time_parser::local_to_utc_safe;
+use chrono::{DateTime, NaiveDate, NaiveDateTime, Utc};
 use rusqlite::{params, OptionalExtension};
 use std::sync::Arc;
 use thiserror::Error;
@@ -312,6 +313,7 @@ impl SessionService {
                     task_id: swt.task.id,
                     task_name: swt.task.name.clone(),
                     em_quadrant: swt.session.em_quadrant(),
+                    start_time: swt.session.start_time,
                     total_seconds: total,
                     split_seconds: split,
                     overlap_seconds: overlap_total,
@@ -337,6 +339,7 @@ impl SessionService {
                     task_id: bg.task.id,
                     task_name: bg.task.name.clone(),
                     em_quadrant: bg.session.em_quadrant(),
+                    start_time: bg.session.start_time,
                     total_seconds: total,
                     split_seconds: split,
                     overlap_seconds: overlap_total,
@@ -500,17 +503,8 @@ impl SessionService {
         let start_of_day_local = date.and_hms_opt(0, 0, 0).unwrap();
         let end_of_day_local = date.and_hms_opt(23, 59, 59).unwrap();
 
-        let local_tz = Local::now().timezone();
-        let start_utc: DateTime<Utc> = local_tz
-            .from_local_datetime(&start_of_day_local)
-            .single()
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap();
-        let end_utc: DateTime<Utc> = local_tz
-            .from_local_datetime(&end_of_day_local)
-            .single()
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap();
+        let start_utc = local_to_utc_safe(start_of_day_local);
+        let end_utc = local_to_utc_safe(end_of_day_local);
 
         let start_of_day = format_sqlite_datetime(&start_utc);
         let end_of_day = format_sqlite_datetime(&end_utc);
@@ -540,20 +534,11 @@ impl SessionService {
             return Ok(vec![]);
         }
 
-        let local_tz = Local::now().timezone();
         let start_of_day_local = date.and_hms_opt(0, 0, 0).unwrap();
         let end_of_day_local = date.and_hms_opt(23, 59, 59).unwrap();
 
-        let start_of_day: DateTime<Utc> = local_tz
-            .from_local_datetime(&start_of_day_local)
-            .single()
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap();
-        let end_of_day: DateTime<Utc> = local_tz
-            .from_local_datetime(&end_of_day_local)
-            .single()
-            .map(|dt| dt.with_timezone(&Utc))
-            .unwrap();
+        let start_of_day = local_to_utc_safe(start_of_day_local);
+        let end_of_day = local_to_utc_safe(end_of_day_local);
 
         let mut blocks: Vec<TimeBlock> = Vec::new();
         let mut last_end: Option<DateTime<Utc>> = None;
@@ -725,8 +710,14 @@ impl SessionService {
     pub fn get_date_range(&self, start: NaiveDate, end: NaiveDate) -> Result<Vec<SessionWithTask>> {
         let conn = self.db.connection();
 
-        let start_str = format!("{} 00:00:00", start.format("%Y-%m-%d"));
-        let end_str = format!("{} 23:59:59", end.format("%Y-%m-%d"));
+        let start_local = start.and_hms_opt(0, 0, 0).unwrap();
+        let end_local = end.and_hms_opt(23, 59, 59).unwrap();
+
+        let start_utc = local_to_utc_safe(start_local);
+        let end_utc = local_to_utc_safe(end_local);
+
+        let start_str = format_sqlite_datetime(&start_utc);
+        let end_str = format_sqlite_datetime(&end_utc);
 
         let mut stmt = conn.prepare(
             "SELECT s.id, s.task_id, s.start_time, s.end_time, s.notes, s.link, s.is_background, s.em_urgent, s.em_important, s.created_at,
@@ -820,20 +811,8 @@ impl SessionService {
         Ok(results)
     }
 
-    pub fn get_tag_time(
-        &self,
-        start: NaiveDate,
-        end: NaiveDate,
-    ) -> Result<(Vec<crate::models::TagTime>, i64)> {
+    pub fn get_task_tags(&self) -> Result<std::collections::HashMap<i64, Vec<String>>> {
         use std::collections::HashMap;
-
-        let split_times = self.get_split_times(start, end)?;
-
-        if split_times.is_empty() {
-            return Ok((vec![], 0));
-        }
-
-        let actual_total: i64 = split_times.iter().map(|st| st.split_seconds).sum();
 
         let conn = self.db.connection();
         let mut task_tags: HashMap<i64, Vec<String>> = HashMap::new();
@@ -852,6 +831,26 @@ impl SessionService {
             let (task_id, tag_name) = row?;
             task_tags.entry(task_id).or_default().push(tag_name);
         }
+
+        Ok(task_tags)
+    }
+
+    pub fn get_tag_time(
+        &self,
+        start: NaiveDate,
+        end: NaiveDate,
+    ) -> Result<(Vec<crate::models::TagTime>, i64)> {
+        use std::collections::HashMap;
+
+        let split_times = self.get_split_times(start, end)?;
+
+        if split_times.is_empty() {
+            return Ok((vec![], 0));
+        }
+
+        let actual_total: i64 = split_times.iter().map(|st| st.split_seconds).sum();
+
+        let task_tags = self.get_task_tags()?;
 
         let mut by_tag: HashMap<String, i64> = HashMap::new();
         for st in &split_times {
@@ -1035,7 +1034,7 @@ impl SessionService {
     }
 }
 
-fn format_sqlite_datetime(dt: &DateTime<Utc>) -> String {
+pub(crate) fn format_sqlite_datetime(dt: &DateTime<Utc>) -> String {
     dt.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
@@ -1055,7 +1054,7 @@ fn parse_sqlite_datetime(s: &str) -> std::result::Result<DateTime<Utc>, rusqlite
 mod tests {
     use super::*;
     use crate::services::TaskService;
-    use chrono::Timelike;
+    use chrono::{Local, Timelike};
 
     fn create_test_services() -> (SessionService, TaskService) {
         let db = Database::open_memory().expect("Failed to create in-memory database");

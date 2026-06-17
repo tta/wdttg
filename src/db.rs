@@ -164,6 +164,22 @@ fn run_migrations(conn: &Connection) -> Result<()> {
         BEGIN
             UPDATE tasks SET updated_at = datetime('now') WHERE id = OLD.id;
         END;
+
+        CREATE TABLE IF NOT EXISTS weekly_targets (
+            week_start TEXT NOT NULL,
+            em_urgent INTEGER NOT NULL CHECK (em_urgent IN (0, 1)),
+            em_important INTEGER NOT NULL CHECK (em_important IN (0, 1)),
+            target_minutes INTEGER NOT NULL,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (week_start, em_urgent, em_important)
+        );
+
+        CREATE TABLE IF NOT EXISTS weekly_reviews (
+            week_start TEXT NOT NULL,
+            notes TEXT,
+            created_at TEXT NOT NULL DEFAULT (datetime('now')),
+            PRIMARY KEY (week_start)
+        );
         "#,
     )?;
 

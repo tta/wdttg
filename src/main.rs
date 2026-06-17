@@ -9,7 +9,7 @@ use wdttg::ui::{
 };
 use wdttg::{
     cli, parse_date, parse_period, parse_relative_time, Commands, Database, EmQuadrant,
-    SessionService, Task, TaskService,
+    ReviewService, SessionService, Task, TaskService,
 };
 
 fn format_duration(duration: chrono::Duration) -> String {
@@ -1167,6 +1167,197 @@ fn handle_report_tag(period: &str, db: &Arc<Database>) -> Result<(), String> {
     Ok(())
 }
 
+const SPARK_CHARS: &[char] = &['·', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
+
+fn week_start(date: chrono::NaiveDate) -> chrono::NaiveDate {
+    use chrono::Datelike;
+    let weekday = date.weekday().num_days_from_monday();
+    date - chrono::Duration::days(weekday as i64)
+}
+
+fn render_sparkline(values: &[i64], max_val: i64) -> String {
+    if max_val == 0 {
+        return values.iter().map(|_| SPARK_CHARS[0]).collect();
+    }
+    values
+        .iter()
+        .map(|&v| {
+            if v == 0 {
+                SPARK_CHARS[0]
+            } else {
+                let level = ((v as f64 / max_val as f64) * 7.0).ceil() as usize;
+                SPARK_CHARS[level.min(7)]
+            }
+        })
+        .collect()
+}
+
+fn format_trend_arrow(values: &[i64]) -> String {
+    if values.len() < 2 {
+        return String::new();
+    }
+    let nonzero: Vec<i64> = values.iter().filter(|&&v| v > 0).copied().collect();
+    if nonzero.len() < 2 {
+        return String::new();
+    }
+    let avg: f64 = nonzero.iter().sum::<i64>() as f64 / nonzero.len() as f64;
+    if avg == 0.0 {
+        return String::new();
+    }
+    let last = nonzero.last().unwrap();
+    let pct = ((*last as f64 - avg) / avg * 100.0) as i64;
+    match pct.cmp(&0) {
+        std::cmp::Ordering::Greater => format!("↑ +{}%", pct),
+        std::cmp::Ordering::Less => format!("↓ {}%", pct),
+        std::cmp::Ordering::Equal => "→  0%".to_string(),
+    }
+}
+
+fn handle_report_trend(
+    period: &str,
+    by: &str,
+    by_tag: bool,
+    top: usize,
+    db: &Arc<Database>,
+) -> Result<(), String> {
+    use std::collections::HashMap;
+
+    let session_service = SessionService::new(Arc::clone(db));
+    let (start, end) = parse_period(period).map_err(|e| e.to_string())?;
+
+    let split_times = session_service
+        .get_split_times(start, end)
+        .map_err(|e| e.to_string())?;
+
+    if split_times.is_empty() {
+        println!("No sessions found for period: {}", period);
+        return Ok(());
+    }
+
+    let bucket_days: i64 = match by {
+        "day" => 1,
+        "week" => 7,
+        _ => return Err(format!("Unknown bucket size: {}. Use 'day' or 'week'.", by)),
+    };
+
+    let num_buckets = ((end - start).num_days() / bucket_days + 1) as usize;
+    let mut buckets: Vec<chrono::NaiveDate> = Vec::with_capacity(num_buckets);
+    let mut d = start;
+    while d <= end {
+        buckets.push(if bucket_days == 7 {
+            week_start(d)
+        } else {
+            d
+        });
+        d += chrono::Duration::days(bucket_days);
+    }
+    buckets.dedup();
+    let num_buckets = buckets.len();
+
+    let bucket_index = |date: chrono::NaiveDate| -> Option<usize> {
+        let b = if bucket_days == 7 {
+            week_start(date)
+        } else {
+            date
+        };
+        buckets.iter().position(|&d| d == b)
+    };
+
+    let mut item_buckets: HashMap<String, Vec<i64>> = HashMap::new();
+    item_buckets.insert("__total__".to_string(), vec![0i64; num_buckets]);
+
+    if by_tag {
+        let task_tags = session_service.get_task_tags().map_err(|e| e.to_string())?;
+        for st in &split_times {
+            let date = st.start_time.date_naive();
+            if let Some(idx) = bucket_index(date) {
+                if let Some(tags) = task_tags.get(&st.task_id) {
+                    for tag in tags {
+                        let entry =
+                            item_buckets.entry(tag.clone()).or_insert(vec![0i64; num_buckets]);
+                        entry[idx] += st.split_seconds;
+                    }
+                }
+                item_buckets.get_mut("__total__").unwrap()[idx] += st.split_seconds;
+            }
+        }
+    } else {
+        for st in &split_times {
+            let date = st.start_time.date_naive();
+            if let Some(idx) = bucket_index(date) {
+                let entry = item_buckets
+                    .entry(st.task_name.clone())
+                    .or_insert(vec![0i64; num_buckets]);
+                entry[idx] += st.split_seconds;
+                item_buckets.get_mut("__total__").unwrap()[idx] += st.split_seconds;
+            }
+        }
+    }
+
+    let total_buckets = item_buckets.remove("__total__").unwrap();
+
+    let mut sorted_items: Vec<(i64, String, Vec<i64>)> = item_buckets
+        .into_iter()
+        .map(|(name, buckets)| {
+            let total: i64 = buckets.iter().sum();
+            (total, name, buckets)
+        })
+        .collect();
+    sorted_items.sort_by(|a, b| b.0.cmp(&a.0));
+    sorted_items.truncate(top);
+
+    let label = if by_tag { "Tag" } else { "Task" };
+    let bucket_label = if bucket_days == 7 {
+        "weekly"
+    } else {
+        "daily"
+    };
+    println!(
+        "{} Trend ({} to {}, {} buckets)",
+        label,
+        start,
+        end,
+        bucket_label
+    );
+    println!("{}", "═".repeat(70));
+
+    let name_width = 20;
+    for (_, name, buckets) in &sorted_items {
+        let max_val = buckets.iter().copied().max().unwrap_or(0);
+        let sparkline = render_sparkline(buckets, max_val);
+        let total: i64 = buckets.iter().sum();
+        let arrow = format_trend_arrow(buckets);
+        let display_name = if by_tag {
+            format!("#{}", name)
+        } else {
+            name.clone()
+        };
+        let truncated: String = display_name.chars().take(name_width).collect();
+        println!(
+            "{:<name_w$} {}  {:>8}  {}",
+            truncated,
+            sparkline,
+            format_duration(chrono::Duration::seconds(total)),
+            arrow,
+            name_w = name_width,
+        );
+    }
+
+    println!("{}", "─".repeat(70));
+    let total_max = total_buckets.iter().copied().max().unwrap_or(0);
+    let total_spark = render_sparkline(&total_buckets, total_max);
+    let total_sum: i64 = total_buckets.iter().sum();
+    println!(
+        "{:<name_w$} {}  {:>8}",
+        "Total",
+        total_spark,
+        format_duration(chrono::Duration::seconds(total_sum)),
+        name_w = name_width,
+    );
+
+    Ok(())
+}
+
 fn handle_report_timeline(
     date_str: &str,
     no_prompt: bool,
@@ -1470,6 +1661,7 @@ fn main() {
             &db,
         ),
         Commands::Timeline { date } => handle_report_timeline(&date, cli.no_prompt, &db),
+        Commands::Review { week, date } => handle_review(week, date.as_deref(), &db),
         Commands::Report { report_type } => match report_type {
             wdttg::ReportCommands::Quadrant { period } => handle_report_quadrant(&period, &db),
             wdttg::ReportCommands::Task { period } => handle_report_task(&period, &db),
@@ -1477,6 +1669,12 @@ fn main() {
             wdttg::ReportCommands::History { tag, period, limit } => {
                 handle_report_history(tag.as_deref(), &period, limit, cli.no_prompt, &db)
             }
+            wdttg::ReportCommands::Trend {
+                period,
+                by,
+                tag,
+                top,
+            } => handle_report_trend(&period, &by, tag, top, &db),
         },
         Commands::Backup { keep } => handle_backup(keep, &db),
         Commands::Completions { shell } => handle_completions(&shell),
@@ -1486,4 +1684,30 @@ fn main() {
         eprintln!("Error: {}", e);
         std::process::exit(1);
     }
+}
+
+fn handle_review(
+    week: Option<u32>,
+    date: Option<&str>,
+    db: &Arc<Database>,
+) -> Result<(), String> {
+    use wdttg::services::monday_of_week;
+    use wdttg::ui::run_review;
+
+    let week_start = if let Some(d) = date {
+        parse_date(d).map_err(|e| e.to_string())?
+    } else if let Some(w) = week {
+        let year = {
+            use chrono::Datelike;
+            chrono::Local::now().year()
+        };
+        chrono::NaiveDate::from_isoywd_opt(year, w, chrono::Weekday::Mon)
+            .ok_or_else(|| format!("Invalid ISO week: {}", w))?
+    } else {
+        monday_of_week(chrono::Local::now().date_naive())
+    };
+
+    let service = ReviewService::new(Arc::clone(db));
+
+    run_review(service, Some(week_start)).map_err(|e| e.to_string())
 }

@@ -1,5 +1,13 @@
-use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveTime, TimeZone, Utc};
+use chrono::{DateTime, Datelike, Local, NaiveDate, NaiveDateTime, NaiveTime, TimeZone, Utc};
 use thiserror::Error;
+
+pub fn local_to_utc_safe(dt: NaiveDateTime) -> DateTime<Utc> {
+    Local
+        .from_local_datetime(&dt)
+        .earliest()
+        .map(|d| d.with_timezone(&Utc))
+        .unwrap_or_else(|| dt.and_utc())
+}
 
 #[derive(Debug, Error)]
 pub enum TimeParseError {
@@ -161,19 +169,11 @@ pub fn parse_relative_time(input: &str) -> Result<DateTime<Utc>> {
     }
 
     if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&input, "%Y-%m-%d %H:%M") {
-        return Ok(Local
-            .from_local_datetime(&dt)
-            .single()
-            .unwrap()
-            .with_timezone(&Utc));
+        return Ok(local_to_utc_safe(dt));
     }
 
     if let Ok(dt) = chrono::NaiveDateTime::parse_from_str(&input, "%Y-%m-%d %H:%M:%S") {
-        return Ok(Local
-            .from_local_datetime(&dt)
-            .single()
-            .unwrap()
-            .with_timezone(&Utc));
+        return Ok(local_to_utc_safe(dt));
     }
 
     Err(TimeParseError::InvalidFormat(input))
@@ -181,11 +181,7 @@ pub fn parse_relative_time(input: &str) -> Result<DateTime<Utc>> {
 
 fn datetime_from_local_date_and_time(date: NaiveDate, time: NaiveTime) -> DateTime<Utc> {
     let naive = chrono::NaiveDateTime::new(date, time);
-    Local
-        .from_local_datetime(&naive)
-        .single()
-        .unwrap()
-        .with_timezone(&Utc)
+    local_to_utc_safe(naive)
 }
 
 fn parse_month_day(input: &str) -> Option<(u32, u32)> {
@@ -242,13 +238,33 @@ pub fn parse_period(period: &str) -> Result<(NaiveDate, NaiveDate)> {
             let start = today - chrono::Duration::days(29);
             Ok((start, today))
         }
-        _ => match parse_date(&period) {
-            Ok(date) => Ok((date, date)),
-            Err(_) => Err(TimeParseError::InvalidFormat(format!(
-                "Unknown period: {}",
-                period
-            ))),
-        },
+        _ => {
+            if let Some(rest) = period.strip_suffix('w') {
+                if let Ok(weeks) = rest.parse::<i64>() {
+                    if weeks > 0 {
+                        let start =
+                            today - chrono::Duration::weeks(weeks) + chrono::Duration::days(1);
+                        return Ok((start, today));
+                    }
+                }
+            }
+            if let Some(rest) = period.strip_suffix('m') {
+                if let Ok(months) = rest.parse::<i64>() {
+                    if months > 0 {
+                        let start =
+                            today - chrono::Duration::days(months * 30) + chrono::Duration::days(1);
+                        return Ok((start, today));
+                    }
+                }
+            }
+            match parse_date(&period) {
+                Ok(date) => Ok((date, date)),
+                Err(_) => Err(TimeParseError::InvalidFormat(format!(
+                    "Unknown period: {}",
+                    period
+                ))),
+            }
+        }
     }
 }
 
@@ -352,6 +368,44 @@ mod tests {
         let today = Local::now().date_naive();
         assert_eq!(end, today);
         assert_eq!((end - start).num_days(), 29);
+    }
+
+    #[test]
+    fn test_parse_period_8w() {
+        let (start, end) = parse_period("8w").unwrap();
+        let today = Local::now().date_naive();
+        assert_eq!(end, today);
+        assert_eq!((end - start).num_days(), 7 * 8 - 1);
+    }
+
+    #[test]
+    fn test_parse_period_4w() {
+        let (start, end) = parse_period("4w").unwrap();
+        let today = Local::now().date_naive();
+        assert_eq!(end, today);
+        assert_eq!((end - start).num_days(), 7 * 4 - 1);
+    }
+
+    #[test]
+    fn test_parse_period_3m() {
+        let (start, end) = parse_period("3m").unwrap();
+        let today = Local::now().date_naive();
+        assert_eq!(end, today);
+        assert_eq!((end - start).num_days(), 3 * 30 - 1);
+    }
+
+    #[test]
+    fn test_parse_period_6m() {
+        let (start, end) = parse_period("6m").unwrap();
+        let today = Local::now().date_naive();
+        assert_eq!(end, today);
+        assert_eq!((end - start).num_days(), 6 * 30 - 1);
+    }
+
+    #[test]
+    fn test_parse_period_invalid_number() {
+        assert!(parse_period("0w").is_err());
+        assert!(parse_period("0m").is_err());
     }
 
     #[test]

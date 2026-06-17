@@ -107,6 +107,15 @@ pub enum Commands {
         date: String,
     },
 
+    #[clap(about = "Weekly review with quadrant budget vs actual and split-attention")]
+    Review {
+        #[arg(long, help = "ISO week number of current year")]
+        week: Option<u32>,
+
+        #[arg(long, help = "Review the week containing this date (YYYY-MM-DD)")]
+        date: Option<String>,
+    },
+
     #[clap(about = "Generate time reports")]
     Report {
         #[command(subcommand)]
@@ -160,6 +169,21 @@ pub enum ReportCommands {
             help = "Maximum number of sessions to show"
         )]
         limit: usize,
+    },
+
+    #[clap(about = "Time trend with sparkline visualization")]
+    Trend {
+        #[arg(default_value = "8w", help = "Period (4w, 8w, 12w, 3m, 6m, day, week, month)")]
+        period: String,
+
+        #[arg(long, default_value = "week", help = "Bucket size (day, week)")]
+        by: String,
+
+        #[arg(long, help = "Trend by tag instead of task")]
+        tag: bool,
+
+        #[arg(long, default_value = "10", help = "Show top N items")]
+        top: usize,
     },
 }
 

@@ -56,6 +56,7 @@ pub struct SessionSplitTime {
     pub task_id: i64,
     pub task_name: String,
     pub em_quadrant: EmQuadrant,
+    pub start_time: DateTime<Utc>,
     pub total_seconds: i64,
     pub split_seconds: i64,
     pub overlap_seconds: i64,

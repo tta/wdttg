@@ -2,8 +2,10 @@ pub mod edit_form;
 pub mod em_selector;
 pub mod history_view;
 pub mod picker;
+pub mod review;
 pub mod session_edit_form;
 pub mod tag_picker;
+pub mod text_editor;
 pub mod timeline;
 
 pub use edit_form::{edit_task, EditFormResult, EditableTask};
@@ -12,6 +14,7 @@ pub use history_view::{print_history_static, HistoryView, HistoryViewError, Hist
 pub use picker::{filter_tasks, PickerResult, TaskPicker};
 pub use session_edit_form::{edit_session, EditableSession, SessionEditError, SessionEditResult};
 pub use tag_picker::{print_tags_static, TagPicker, TagPickerError, TagPickerResult};
+pub use review::{run_review, ReviewView, ReviewViewError};
 pub use timeline::{
     print_timeline_static, quadrant_color, TimelineError, TimelineResult, TimelineView, ZoomLevel,
 };
