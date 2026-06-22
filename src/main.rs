@@ -8,8 +8,8 @@ use wdttg::ui::{
     EmSelectorResult, PickerResult, SessionEditResult, TaskPicker, TimelineView,
 };
 use wdttg::{
-    cli, parse_date, parse_period, parse_relative_time, Commands, Database, EmQuadrant,
-    ReviewService, SessionService, Task, TaskService,
+    cli, parse_date, parse_period, parse_relative_time, BucketBy, Commands, Database, EmQuadrant,
+    ReviewService, SessionService, Task, TaskService, TrendDimension,
 };
 
 fn format_duration(duration: chrono::Duration) -> String {
@@ -1167,193 +1167,145 @@ fn handle_report_tag(period: &str, db: &Arc<Database>) -> Result<(), String> {
     Ok(())
 }
 
-const SPARK_CHARS: &[char] = &['·', '▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-
-fn week_start(date: chrono::NaiveDate) -> chrono::NaiveDate {
-    use chrono::Datelike;
-    let weekday = date.weekday().num_days_from_monday();
-    date - chrono::Duration::days(weekday as i64)
-}
-
-fn render_sparkline(values: &[i64], max_val: i64) -> String {
-    if max_val == 0 {
-        return values.iter().map(|_| SPARK_CHARS[0]).collect();
-    }
-    values
-        .iter()
-        .map(|&v| {
-            if v == 0 {
-                SPARK_CHARS[0]
-            } else {
-                let level = ((v as f64 / max_val as f64) * 7.0).ceil() as usize;
-                SPARK_CHARS[level.min(7)]
-            }
-        })
-        .collect()
-}
-
-fn format_trend_arrow(values: &[i64]) -> String {
-    if values.len() < 2 {
-        return String::new();
-    }
-    let nonzero: Vec<i64> = values.iter().filter(|&&v| v > 0).copied().collect();
-    if nonzero.len() < 2 {
-        return String::new();
-    }
-    let avg: f64 = nonzero.iter().sum::<i64>() as f64 / nonzero.len() as f64;
-    if avg == 0.0 {
-        return String::new();
-    }
-    let last = nonzero.last().unwrap();
-    let pct = ((*last as f64 - avg) / avg * 100.0) as i64;
-    match pct.cmp(&0) {
-        std::cmp::Ordering::Greater => format!("↑ +{}%", pct),
-        std::cmp::Ordering::Less => format!("↓ {}%", pct),
-        std::cmp::Ordering::Equal => "→  0%".to_string(),
-    }
-}
-
 fn handle_report_trend(
     period: &str,
     by: &str,
     by_tag: bool,
     top: usize,
+    no_prompt: bool,
     db: &Arc<Database>,
 ) -> Result<(), String> {
-    use std::collections::HashMap;
-
     let session_service = SessionService::new(Arc::clone(db));
     let (start, end) = parse_period(period).map_err(|e| e.to_string())?;
 
-    let split_times = session_service
+    let sessions = session_service
         .get_split_times(start, end)
         .map_err(|e| e.to_string())?;
 
-    if split_times.is_empty() {
+    if sessions.is_empty() {
         println!("No sessions found for period: {}", period);
         return Ok(());
     }
 
-    let bucket_days: i64 = match by {
-        "day" => 1,
-        "week" => 7,
-        _ => return Err(format!("Unknown bucket size: {}. Use 'day' or 'week'.", by)),
+    let bucket_by = match BucketBy::parse_bucket(by) {
+        Some(b) => b,
+        None => return Err(format!("Unknown bucket size: {}. Use 'day' or 'week'.", by)),
     };
 
-    let num_buckets = ((end - start).num_days() / bucket_days + 1) as usize;
-    let mut buckets: Vec<chrono::NaiveDate> = Vec::with_capacity(num_buckets);
-    let mut d = start;
-    while d <= end {
-        buckets.push(if bucket_days == 7 {
-            week_start(d)
-        } else {
-            d
-        });
-        d += chrono::Duration::days(bucket_days);
-    }
-    buckets.dedup();
-    let num_buckets = buckets.len();
-
-    let bucket_index = |date: chrono::NaiveDate| -> Option<usize> {
-        let b = if bucket_days == 7 {
-            week_start(date)
-        } else {
-            date
-        };
-        buckets.iter().position(|&d| d == b)
-    };
-
-    let mut item_buckets: HashMap<String, Vec<i64>> = HashMap::new();
-    item_buckets.insert("__total__".to_string(), vec![0i64; num_buckets]);
-
-    if by_tag {
-        let task_tags = session_service.get_task_tags().map_err(|e| e.to_string())?;
-        for st in &split_times {
-            let date = st.start_time.date_naive();
-            if let Some(idx) = bucket_index(date) {
-                if let Some(tags) = task_tags.get(&st.task_id) {
-                    for tag in tags {
-                        let entry =
-                            item_buckets.entry(tag.clone()).or_insert(vec![0i64; num_buckets]);
-                        entry[idx] += st.split_seconds;
-                    }
-                }
-                item_buckets.get_mut("__total__").unwrap()[idx] += st.split_seconds;
-            }
-        }
+    let task_tags = if by_tag || !no_prompt {
+        Some(
+            session_service
+                .get_task_tags()
+                .map_err(|e| e.to_string())?,
+        )
     } else {
-        for st in &split_times {
-            let date = st.start_time.date_naive();
-            if let Some(idx) = bucket_index(date) {
-                let entry = item_buckets
-                    .entry(st.task_name.clone())
-                    .or_insert(vec![0i64; num_buckets]);
-                entry[idx] += st.split_seconds;
-                item_buckets.get_mut("__total__").unwrap()[idx] += st.split_seconds;
-            }
-        }
-    }
-
-    let total_buckets = item_buckets.remove("__total__").unwrap();
-
-    let mut sorted_items: Vec<(i64, String, Vec<i64>)> = item_buckets
-        .into_iter()
-        .map(|(name, buckets)| {
-            let total: i64 = buckets.iter().sum();
-            (total, name, buckets)
-        })
-        .collect();
-    sorted_items.sort_by(|a, b| b.0.cmp(&a.0));
-    sorted_items.truncate(top);
-
-    let label = if by_tag { "Tag" } else { "Task" };
-    let bucket_label = if bucket_days == 7 {
-        "weekly"
-    } else {
-        "daily"
+        None
     };
-    println!(
-        "{} Trend ({} to {}, {} buckets)",
-        label,
+
+    if no_prompt {
+        let dimension = if by_tag { TrendDimension::Tag } else { TrendDimension::Task };
+        print_trend_stdout(&sessions, task_tags.as_ref(), dimension, bucket_by, start, end, top)
+    } else {
+        let starting_dim = if by_tag { TrendDimension::Tag } else { TrendDimension::Task };
+        let view = wdttg::ui::TrendView::new(
+            sessions,
+            task_tags.unwrap_or_default(),
+            start,
+            end,
+            starting_dim,
+            bucket_by,
+            top,
+        )
+        .map_err(|e| e.to_string())?;
+        view.run().map_err(|e| e.to_string())
+    }
+}
+
+/// Stdout fallback for `wdttg report trend --no-prompt` (and for terminals
+/// too narrow for the TUI). Behavior is byte-identical to the pre-TUI
+/// implementation: header, top-N rows with sparkline + arrow + total,
+/// divider, total row.
+fn print_trend_stdout(
+    sessions: &[wdttg::SessionSplitTime],
+    task_tags: Option<&std::collections::HashMap<i64, Vec<String>>>,
+    dimension: TrendDimension,
+    bucket_by: BucketBy,
+    start: chrono::NaiveDate,
+    end: chrono::NaiveDate,
+    top: usize,
+) -> Result<(), String> {
+    let mut out = std::io::stdout().lock();
+    write_trend_stdout(&mut out, sessions, task_tags, dimension, bucket_by, start, end, top)
+}
+
+/// Writer-injected core of `print_trend_stdout`. Enables snapshot tests.
+#[allow(clippy::too_many_arguments)]
+fn write_trend_stdout<W: std::io::Write>(
+    out: &mut W,
+    sessions: &[wdttg::SessionSplitTime],
+    task_tags: Option<&std::collections::HashMap<i64, Vec<String>>>,
+    dimension: TrendDimension,
+    bucket_by: BucketBy,
+    start: chrono::NaiveDate,
+    end: chrono::NaiveDate,
+    top: usize,
+) -> Result<(), String> {
+    let result = wdttg::compute_trend_buckets(
+        sessions,
+        task_tags,
+        dimension,
+        bucket_by,
         start,
         end,
-        bucket_label
+        top,
     );
-    println!("{}", "═".repeat(70));
+
+    let label = dimension.header_label();
+    let bucket_label = bucket_by.label();
+    writeln!(
+        out,
+        "{} Trend ({} to {}, {} buckets)",
+        label, start, end, bucket_label
+    )
+    .map_err(|e| e.to_string())?;
+    writeln!(out, "{}", "═".repeat(70)).map_err(|e| e.to_string())?;
 
     let name_width = 20;
-    for (_, name, buckets) in &sorted_items {
-        let max_val = buckets.iter().copied().max().unwrap_or(0);
-        let sparkline = render_sparkline(buckets, max_val);
-        let total: i64 = buckets.iter().sum();
-        let arrow = format_trend_arrow(buckets);
-        let display_name = if by_tag {
-            format!("#{}", name)
+    for it in &result.items {
+        let max_val = it.buckets.iter().copied().max().unwrap_or(0);
+        let sparkline = wdttg::render_sparkline(&it.buckets, max_val);
+        let arrow = wdttg::format_trend_arrow(&it.buckets);
+        let display_name = if dimension == TrendDimension::Tag {
+            format!("#{}", it.name)
         } else {
-            name.clone()
+            it.name.clone()
         };
         let truncated: String = display_name.chars().take(name_width).collect();
-        println!(
+        writeln!(
+            out,
             "{:<name_w$} {}  {:>8}  {}",
             truncated,
             sparkline,
-            format_duration(chrono::Duration::seconds(total)),
+            format_duration(chrono::Duration::seconds(it.total)),
             arrow,
             name_w = name_width,
-        );
+        )
+        .map_err(|e| e.to_string())?;
     }
 
-    println!("{}", "─".repeat(70));
-    let total_max = total_buckets.iter().copied().max().unwrap_or(0);
-    let total_spark = render_sparkline(&total_buckets, total_max);
-    let total_sum: i64 = total_buckets.iter().sum();
-    println!(
+    writeln!(out, "{}", "─".repeat(70)).map_err(|e| e.to_string())?;
+    let total_max = result.totals.iter().copied().max().unwrap_or(0);
+    let total_spark = wdttg::render_sparkline(&result.totals, total_max);
+    let total_sum: i64 = result.totals.iter().sum();
+    writeln!(
+        out,
         "{:<name_w$} {}  {:>8}",
         "Total",
         total_spark,
         format_duration(chrono::Duration::seconds(total_sum)),
         name_w = name_width,
-    );
+    )
+    .map_err(|e| e.to_string())?;
 
     Ok(())
 }
@@ -1674,7 +1626,7 @@ fn main() {
                 by,
                 tag,
                 top,
-            } => handle_report_trend(&period, &by, tag, top, &db),
+            } => handle_report_trend(&period, &by, tag, top, cli.no_prompt, &db),
         },
         Commands::Backup { keep } => handle_backup(keep, &db),
         Commands::Completions { shell } => handle_completions(&shell),
@@ -1710,4 +1662,127 @@ fn handle_review(
     let service = ReviewService::new(Arc::clone(db));
 
     run_review(service, Some(week_start)).map_err(|e| e.to_string())
+}
+
+#[cfg(test)]
+mod trend_stdout_tests {
+    use super::*;
+    use chrono::{TimeZone, Utc};
+    use wdttg::models::{EmQuadrant, SessionSplitTime};
+    use wdttg::{BucketBy, TrendDimension};
+
+    fn split(id: i64, task_id: i64, name: &str, q: EmQuadrant, day: u32) -> SessionSplitTime {
+        SessionSplitTime {
+            session_id: id,
+            task_id,
+            task_name: name.to_string(),
+            em_quadrant: q,
+            start_time: Utc.with_ymd_and_hms(2026, 6, day, 9, 0, 0).unwrap(),
+            total_seconds: 3600,
+            split_seconds: 3600,
+            overlap_seconds: 0,
+            link: None,
+        }
+    }
+
+    fn date(y: i32, m: u32, d: u32) -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(y, m, d).unwrap()
+    }
+
+    #[test]
+    fn stdout_task_dimension_snapshot() {
+        let sessions = [
+            split(1, 100, "coding/x", EmQuadrant::Schedule, 1),
+            split(2, 100, "coding/x", EmQuadrant::Schedule, 8),
+            split(3, 200, "meeting/y", EmQuadrant::Delegate, 2),
+        ];
+        let mut buf: Vec<u8> = Vec::new();
+        write_trend_stdout(
+            &mut buf,
+            &sessions,
+            None,
+            TrendDimension::Task,
+            BucketBy::Week,
+            date(2026, 6, 1),
+            date(2026, 6, 15),
+            10,
+        )
+        .unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("Task Trend (2026-06-01 to 2026-06-15, weekly buckets)"));
+        assert!(out.contains("Total"));
+        assert!(out.contains("2h 0m"));
+        let coding_pos = out.find("coding/x").unwrap();
+        let meeting_pos = out.find("meeting/y").unwrap();
+        assert!(coding_pos < meeting_pos);
+    }
+
+    #[test]
+    fn stdout_quadrant_dimension_snapshot() {
+        let sessions = [
+            split(1, 1, "a", EmQuadrant::DoFirst, 1),
+            split(2, 2, "b", EmQuadrant::Schedule, 1),
+            split(3, 3, "c", EmQuadrant::Delegate, 1),
+            split(4, 4, "d", EmQuadrant::Eliminate, 1),
+        ];
+        let mut buf: Vec<u8> = Vec::new();
+        write_trend_stdout(
+            &mut buf,
+            &sessions,
+            None,
+            TrendDimension::Quadrant,
+            BucketBy::Day,
+            date(2026, 6, 1),
+            date(2026, 6, 1),
+            10,
+        )
+        .unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("EM Quadrant Trend"));
+        assert!(out.contains("Q1 DoFirst"));
+        assert!(out.contains("Q2 Schedule"));
+        assert!(out.contains("Q3 Delegate"));
+        assert!(out.contains("Q4 Eliminate"));
+    }
+
+    #[test]
+    fn stdout_tag_dimension_uses_task_tags() {
+        let sessions = [split(1, 100, "coding/x", EmQuadrant::Schedule, 1)];
+        let mut tags = std::collections::HashMap::new();
+        tags.insert(100, vec!["work".to_string()]);
+        let mut buf: Vec<u8> = Vec::new();
+        write_trend_stdout(
+            &mut buf,
+            &sessions,
+            Some(&tags),
+            TrendDimension::Tag,
+            BucketBy::Day,
+            date(2026, 6, 1),
+            date(2026, 6, 1),
+            10,
+        )
+        .unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("Tag Trend"));
+        assert!(out.contains("#work"));
+    }
+
+    #[test]
+    fn stdout_empty_items_still_prints_header_and_total() {
+        let mut buf: Vec<u8> = Vec::new();
+        write_trend_stdout(
+            &mut buf,
+            &[],
+            None,
+            TrendDimension::Task,
+            BucketBy::Day,
+            date(2026, 6, 1),
+            date(2026, 6, 7),
+            10,
+        )
+        .unwrap();
+        let out = String::from_utf8(buf).unwrap();
+        assert!(out.contains("Task Trend"));
+        assert!(out.contains("Total"));
+    }
 }

@@ -317,6 +317,7 @@ impl SessionService {
                     total_seconds: total,
                     split_seconds: split,
                     overlap_seconds: overlap_total,
+                    link: swt.session.link.clone(),
                 },
             );
         }
@@ -343,6 +344,7 @@ impl SessionService {
                     total_seconds: total,
                     split_seconds: split,
                     overlap_seconds: overlap_total,
+                    link: bg.session.link.clone(),
                 },
             );
         }

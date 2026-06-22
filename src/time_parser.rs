@@ -225,8 +225,13 @@ pub fn parse_date(input: &str) -> Result<NaiveDate> {
 }
 
 pub fn parse_period(period: &str) -> Result<(NaiveDate, NaiveDate)> {
+    parse_period_at(period, Local::now().date_naive())
+}
+
+/// Date-injected variant of `parse_period` for deterministic tests.
+/// `today` is treated as the current date; period is interpreted relative to it.
+pub fn parse_period_at(period: &str, today: NaiveDate) -> Result<(NaiveDate, NaiveDate)> {
     let period = period.trim().to_lowercase();
-    let today = Local::now().date_naive();
 
     match period.as_str() {
         "day" | "today" => Ok((today, today)),
@@ -406,6 +411,34 @@ mod tests {
     fn test_parse_period_invalid_number() {
         assert!(parse_period("0w").is_err());
         assert!(parse_period("0m").is_err());
+    }
+
+    #[test]
+    fn test_parse_period_at_deterministic() {
+        // Fixed "today" — no reliance on Local::now().
+        let today = NaiveDate::from_ymd_opt(2026, 6, 17).unwrap();
+
+        let (s, e) = parse_period_at("day", today).unwrap();
+        assert_eq!((s, e), (today, today));
+
+        let (s, e) = parse_period_at("week", today).unwrap();
+        assert_eq!(e, today);
+        assert_eq!((e - s).num_days(), 6);
+
+        let (s, e) = parse_period_at("8w", today).unwrap();
+        assert_eq!(e, today);
+        assert_eq!((e - s).num_days(), 7 * 8 - 1);
+
+        let (s, e) = parse_period_at("3m", today).unwrap();
+        assert_eq!(e, today);
+        assert_eq!((e - s).num_days(), 3 * 30 - 1);
+
+        // ISO date passes through unchanged.
+        let (s, e) = parse_period_at("2026-01-15", today).unwrap();
+        assert_eq!(s, NaiveDate::from_ymd_opt(2026, 1, 15).unwrap());
+        assert_eq!(s, e);
+
+        assert!(parse_period_at("garbage", today).is_err());
     }
 
     #[test]

@@ -84,6 +84,7 @@ wdttg report tag week
 | `wdttg report quadrant [period]` | Time by Eisenhower Matrix quadrant |
 | `wdttg report task [period]` | Time by task |
 | `wdttg report tag [period]` | Time by tag |
+| `wdttg report trend [period] [--by day\|week] [--tag] [--top N]` | Interactive TUI trend (Task/Tag/Quadrant/Split-Attention dimensions, drill-down). Add `--no-prompt` for the stdout version. |
 | `wdttg report history [tag]` | Browse sessions by tag (TUI) |
 | `wdttg report history --period month --limit 50` | History with custom period and limit |
 
@@ -201,6 +202,44 @@ wdttg report history --period month
 - `d/w/m`: Change period (day/week/month)
 - `Esc` or `q`: Back/Quit
 - `Ctrl+C`: Quit
+
+## Trend TUI
+
+Interactive trend explorer with four cyclable dimensions:
+
+```bash
+# Default: opens the TUI with 8 weeks of data, weekly buckets
+wdttg report trend
+
+# 12 weeks, daily buckets, starting in Tag dimension
+wdttg report trend 12w --by day --tag
+
+# Top 20 tasks
+wdttg report trend --top 20
+
+# Script-friendly stdout output (no TUI)
+wdttg report trend --no-prompt
+```
+
+**Dimensions (Tab to cycle):**
+- `Task` — top tasks by total time
+- `Tag` — top tags (uses task/tag hierarchy)
+- `Quadrant` — four fixed rows (DoFirst/Schedule/Delegate/Eliminate) in EM colors
+- `Split-Attention` — tasks with background overlap, sparkline red when rising
+
+**Keybindings:**
+- `j/k`: Move selection
+- `Tab`: Cycle dimension (Task → Tag → Quadrant → Split-Attention)
+- `d/w`: Bucket by day/week
+- `Enter`: Drill into selected row's highest bucket
+- `h/l`: (drill-down) Move between buckets
+- `j/k`: (drill-down) Move between sessions
+- `o`: (drill-down) Open session link
+- `Esc`: Back (closes drill-down) or quit
+- `q`: Quit
+
+Period (`4w`/`8w`/`12w`/`3m`/`6m`) is fixed at launch. Re-run with a different
+period to change the window.
 
 ## Configuration
 

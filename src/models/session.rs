@@ -60,6 +60,7 @@ pub struct SessionSplitTime {
     pub total_seconds: i64,
     pub split_seconds: i64,
     pub overlap_seconds: i64,
+    pub link: Option<String>,
 }
 
 impl SessionSplitTime {

@@ -7,6 +7,7 @@ pub mod session_edit_form;
 pub mod tag_picker;
 pub mod text_editor;
 pub mod timeline;
+pub mod trend_view;
 
 pub use edit_form::{edit_task, EditFormResult, EditableTask};
 pub use em_selector::{select_em_quadrant, EmSelectorResult};
@@ -18,6 +19,7 @@ pub use review::{run_review, ReviewView, ReviewViewError};
 pub use timeline::{
     print_timeline_static, quadrant_color, TimelineError, TimelineResult, TimelineView, ZoomLevel,
 };
+pub use trend_view::{TrendView, TrendViewError};
 
 pub use history_view::Period as HistoryViewPeriod;
 pub use tag_picker::Period as TagPickerPeriod;
